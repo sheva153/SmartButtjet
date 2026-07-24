@@ -49,6 +49,7 @@ class BotConfig(BaseModel):
 class StorageConfig(BaseModel):
     records_file: Path = Path("data/records.csv")
     notes_file: Path = Path("data/record_notes.csv")
+    chat_settings_file: Path = Path("data/chat_settings.csv")
     export_directory: Path = Path("data/exports")
 
 
@@ -173,8 +174,16 @@ class RecordNote(BaseModel):
         return value
 
 
+class ChatSetting(BaseModel):
+    chat_id: int
+    enabled: bool = True
+    updated_by: int
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 RECORD_COLUMNS = list(IncomeRecord.model_fields)
 NOTE_COLUMNS = list(RecordNote.model_fields)
+CHAT_SETTING_COLUMNS = list(ChatSetting.model_fields)
 
 
 def normalize_category(value: str) -> str:
@@ -371,6 +380,7 @@ class CsvStorage:
     def __init__(self, config: StorageConfig):
         self.records_path = config.records_file
         self.notes_path = config.notes_file
+        self.chat_settings_path = config.chat_settings_file
         self.export_directory = config.export_directory
         self._lock = asyncio.Lock()
 
@@ -425,6 +435,40 @@ class CsvStorage:
 
     def read_notes_sync(self) -> pd.DataFrame:
         return self._read(self.notes_path, NOTE_COLUMNS)
+
+    def read_chat_settings_sync(self) -> pd.DataFrame:
+        return self._read(self.chat_settings_path, CHAT_SETTING_COLUMNS)
+
+    def get_chat_setting_sync(self, chat_id: int) -> ChatSetting | None:
+        frame = self.read_chat_settings_sync()
+        rows = frame[frame["chat_id"] == str(chat_id)]
+        if rows.empty:
+            return None
+        return ChatSetting.model_validate(rows.iloc[-1].to_dict())
+
+    def is_chat_enabled_sync(self, chat_id: int) -> bool:
+        setting = self.get_chat_setting_sync(chat_id)
+        return setting.enabled if setting else True
+
+    def set_chat_enabled_sync(
+        self, chat_id: int, enabled: bool, updated_by: int
+    ) -> ChatSetting:
+        frame = self.read_chat_settings_sync()
+        setting = ChatSetting(
+            chat_id=chat_id,
+            enabled=enabled,
+            updated_by=updated_by,
+        )
+        row = {
+            key: str(value) for key, value in setting.model_dump(mode="json").items()
+        }
+        indexes = frame.index[frame["chat_id"] == str(chat_id)].tolist()
+        if indexes:
+            frame.loc[indexes[-1], CHAT_SETTING_COLUMNS] = pd.Series(row)
+        else:
+            frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True)
+        self._atomic_write(frame, self.chat_settings_path)
+        return setting
 
     def get_record_sync(self, record_id: str) -> IncomeRecord | None:
         frame = self.read_records_sync()
@@ -505,6 +549,17 @@ class CsvStorage:
     async def add_note(self, note: RecordNote) -> RecordNote:
         async with self._lock:
             return await asyncio.to_thread(self.add_note_sync, note)
+
+    async def is_chat_enabled(self, chat_id: int) -> bool:
+        return await asyncio.to_thread(self.is_chat_enabled_sync, chat_id)
+
+    async def set_chat_enabled(
+        self, chat_id: int, enabled: bool, updated_by: int
+    ) -> ChatSetting:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self.set_chat_enabled_sync, chat_id, enabled, updated_by
+            )
 
 
 # Analytics and exports
@@ -871,6 +926,44 @@ async def is_admin(message_or_query: Message | CallbackQuery, user_id: int) -> b
     return member.status in {"administrator", "creator"}
 
 
+async def set_chat_mode(message: Message, enabled: bool) -> None:
+    _, storage = app_context()
+    if not message.from_user:
+        return
+    if not await is_admin(message, message.from_user.id):
+        await message.answer("Цю команду можуть використовувати лише адміністратори.")
+        return
+    await storage.set_chat_enabled(
+        message.chat.id, enabled=enabled, updated_by=message.from_user.id
+    )
+    if enabled:
+        await message.answer("🟢 Запис доходів увімкнено для цього чату.")
+    else:
+        await message.answer(
+            "🔴 Запис доходів вимкнено. Нові звичайні повідомлення ігноруються."
+        )
+
+
+@router.message(Command("turn_on"))
+async def turn_on_handler(message: Message) -> None:
+    await set_chat_mode(message, enabled=True)
+
+
+@router.message(Command("turn_off"))
+async def turn_off_handler(message: Message) -> None:
+    await set_chat_mode(message, enabled=False)
+
+
+@router.message(Command("status"))
+async def status_handler(message: Message) -> None:
+    _, storage = app_context()
+    enabled = await storage.is_chat_enabled(message.chat.id)
+    if enabled:
+        await message.answer("🟢 Запис доходів увімкнено для цього чату.")
+    else:
+        await message.answer("🔴 Запис доходів вимкнено для цього чату.")
+
+
 @router.message(Command("start", "help"))
 @router.message(F.text == "ℹ️ Допомога")
 async def help_handler(message: Message) -> None:
@@ -880,7 +973,10 @@ async def help_handler(message: Message) -> None:
         "• Отримав 1500 грн за консультацію\n"
         "• Earned $250 for design\n"
         "• Продаж 2300\n\n"
-        "Валюта без позначення — UAH. Будь-яке поле можна змінити кнопками.",
+        "Валюта без позначення — UAH. Будь-яке поле можна змінити кнопками.\n\n"
+        "/status — поточний режим запису\n"
+        "/turn_on — увімкнути запис (admin)\n"
+        "/turn_off — вимкнути запис (admin)",
         reply_markup=main_menu(),
     )
 
@@ -1223,6 +1319,8 @@ async def income_message_handler(message: Message, state: FSMContext) -> None:
         or not is_allowed_chat(config, message.chat.id)
     ):
         return
+    if not await storage.is_chat_enabled(message.chat.id):
+        return
     parsed_items = parse_income_message(
         message.text,
         default_currency=config.income.default_currency,
@@ -1286,6 +1384,9 @@ async def run_bot(config: AppConfig) -> None:
             BotCommand(command="records", description="Останні записи"),
             BotCommand(command="stats", description="Статистика"),
             BotCommand(command="chart", description="Діаграма"),
+            BotCommand(command="status", description="Режим запису"),
+            BotCommand(command="turn_on", description="Увімкнути запис"),
+            BotCommand(command="turn_off", description="Вимкнути запис"),
             BotCommand(command="cancel", description="Скасувати дію"),
         ]
     )
@@ -1323,6 +1424,7 @@ def cli() -> None:
     elif args.command == "check-storage":
         storage.read_records_sync()
         storage.read_notes_sync()
+        storage.read_chat_settings_sync()
         print("Storage is valid.")
     elif args.command == "parse":
         results = parse_income_message(

@@ -32,6 +32,7 @@ def storage(tmp_path: Path) -> CsvStorage:
         StorageConfig(
             records_file=tmp_path / "records.csv",
             notes_file=tmp_path / "notes.csv",
+            chat_settings_file=tmp_path / "chat_settings.csv",
             export_directory=tmp_path / "exports",
         )
     )
@@ -181,6 +182,20 @@ def test_storage_reports_damaged_schema(storage: CsvStorage) -> None:
     storage.records_path.write_text("wrong,column\n1,2\n", encoding="utf-8")
     with pytest.raises(ValueError, match="misses columns"):
         storage.read_records_sync()
+
+
+def test_chat_recording_is_enabled_by_default(storage: CsvStorage) -> None:
+    assert storage.is_chat_enabled_sync(-100) is True
+
+
+def test_chat_recording_mode_is_persisted_per_chat(storage: CsvStorage) -> None:
+    storage.set_chat_enabled_sync(-100, enabled=False, updated_by=42)
+    storage.set_chat_enabled_sync(-200, enabled=True, updated_by=99)
+    assert storage.is_chat_enabled_sync(-100) is False
+    assert storage.is_chat_enabled_sync(-200) is True
+    setting = storage.get_chat_setting_sync(-100)
+    assert setting is not None
+    assert setting.updated_by == 42
 
 
 def test_analytics_summary(storage: CsvStorage) -> None:

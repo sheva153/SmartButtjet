@@ -6,6 +6,7 @@ bot:
 storage:
   records_file: data/records.csv
   notes_file: data/record_notes.csv
+  chat_settings_file: data/chat_settings.csv
   export_directory: data/exports
 
 income:
