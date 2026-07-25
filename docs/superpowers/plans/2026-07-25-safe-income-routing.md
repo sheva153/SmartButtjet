@@ -124,6 +124,7 @@ INCOME_INTENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
 def has_income_intent(text: str) -> bool:
     return INCOME_INTENT_PATTERN.search(text) is not None
 ```

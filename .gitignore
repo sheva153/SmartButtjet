@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 data/*.csv
 data/exports/
+logs/
 *.html
 *.png
 .pytest_cache/

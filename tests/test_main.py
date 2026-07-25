@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from loguru import logger
 
 from main import (
     AppConfig,
@@ -17,8 +18,11 @@ from main import (
     analytics_frame,
     build_export_zip,
     build_fun_summary,
+    classify_income_message,
+    configure_logging,
     decimal_from_text,
     filter_period,
+    has_income_intent,
     income_summary,
     load_config,
     parse_income_message,
@@ -132,6 +136,56 @@ def test_date_is_not_parsed_as_amount() -> None:
     assert [item.amount for item in parsed] == [Decimal("1500.00")]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Отримав 100 грн",
+        "Заробила 200",
+        "Продали товар за 300",
+        "Оплата 400",
+        "Earned $50",
+        "Payment 60 EUR",
+    ],
+)
+def test_income_intent_is_detected(text: str) -> None:
+    assert has_income_intent(text)
+
+
+def test_ordinary_numeric_text_has_no_income_intent() -> None:
+    assert not has_income_intent("зустріч о 15")
+
+
+def test_clock_time_is_not_parsed_as_amount() -> None:
+    parsed = parse_income_message("зустріч о 15:00")
+    assert parsed[0].amount is None
+
+
+def test_standalone_hour_is_still_an_amount_candidate() -> None:
+    parsed = parse_income_message("зустріч о 15")
+    assert parsed[0].amount == Decimal("15.00")
+
+
+def test_clock_and_date_are_excluded_but_income_remains() -> None:
+    parsed = parse_income_message(
+        "о 9:30 отримав 1500 грн 10.07", today=date(2026, 7, 24)
+    )
+    assert [item.amount for item in parsed] == [Decimal("1500.00")]
+    assert parsed[0].income_date == date(2026, 7, 10)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Отримав 1500 грн", "save"),
+        ("отримав оплату", "ignore"),
+        ("1500 грн за дизайн", "confirm"),
+        ("звичайне повідомлення", "ignore"),
+    ],
+)
+def test_income_routing_decision(text: str, expected: str) -> None:
+    assert classify_income_message(text, parse_income_message(text)) == expected
+
+
 def test_decimal_rejects_non_positive_amount() -> None:
     with pytest.raises(ValueError, match="positive"):
         decimal_from_text("0")
@@ -172,9 +226,10 @@ def test_storage_add_note_and_delete_record(storage: CsvStorage) -> None:
         RecordNote(record_id=record.id, user_id=7, text="Оплачено готівкою")
     )
     assert len(storage.read_notes_sync()) == 1
-    storage.delete_record_sync(record.id)
+    assert storage.delete_record_sync(record.id) is True
     assert storage.read_records_sync().empty
     assert storage.read_notes_sync().empty
+    assert storage.delete_record_sync(record.id) is False
 
 
 def test_storage_reports_damaged_schema(storage: CsvStorage) -> None:
@@ -314,3 +369,20 @@ def test_existing_csv_is_migrated_with_income_date(storage: CsvStorage) -> None:
     pd.DataFrame([row]).to_csv(storage.records_path, index=False)
     migrated = storage.read_records_sync()
     assert migrated.iloc[0]["income_date"] == "2026-07-24"
+
+
+def test_logging_configuration_does_not_duplicate_file_sink(tmp_path: Path) -> None:
+    log_file = tmp_path / "bot.log"
+    configure_logging("INFO", log_file)
+    configure_logging("INFO", log_file)
+    marker = "single-log-marker"
+    logger.info(marker)
+    logger.complete()
+    assert log_file.read_text(encoding="utf-8").count(marker) == 1
+
+
+def test_justfile_invokes_uv_directly() -> None:
+    contents = Path("justfile").read_text(encoding="utf-8")
+    assert "python -m uv" not in contents
+    assert "uv sync" in contents
+    assert "uv run pytest" in contents

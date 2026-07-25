@@ -2,9 +2,11 @@
  SmartButtJet 🚀 Drop a message and watch your income become records, editable notes, stats, and charts. Pause the money radar when needed, then fire it back up. It also calculates your wealth in burgers, coffee, and suspicious fractions of matchboxes. Finance, but with more thrust and more butt. 🍑
 # Income Stats Bot
 
-Інтерактивний Telegram-бот для обліку доходів у спеціальній групі. Кожне
-звичайне повідомлення в дозволеній групі вважається доходом. Локальний parser
-розпізнає українські й англійські суми та валюти без AI/API-запитів.
+Інтерактивний Telegram-бот для обліку доходів у спеціальній групі. Повідомлення
+з ознакою доходу (`отримав`, `заробив`, `продав`, `earned` тощо) і сумою
+записується автоматично. Для числа без такої ознаки бот спершу просить
+підтвердження. Локальний parser розпізнає українські й англійські суми та
+валюти без AI/API-запитів.
 
 ## Можливості
 
@@ -32,6 +34,7 @@ cp .env.example .env
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:your-token
+LOG_LEVEL=INFO
 ```
 
 Відредагуй `config.yaml`:
@@ -50,6 +53,10 @@ bot:
 
 Оскільки бот обробляє звичайні повідомлення групи, у BotFather потрібно
 вимкнути Privacy Mode: `/setprivacy` → вибрати бота → `Disable`.
+
+Логи рівня `INFO` виводяться в консоль. Детальні логи пишуться у
+`logs/bot.log`, ротуються після 10 MB і зберігаються 14 днів. Токени, повний
+текст звичайних повідомлень і нотатки не логуються.
 
 ## Запуск
 

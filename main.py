@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import random
 import re
+import sys
 import tempfile
 import zipfile
 from collections.abc import Sequence
@@ -34,6 +35,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -112,10 +114,34 @@ class AppConfig(BaseModel):
 
 class Secrets(BaseSettings):
     telegram_bot_token: str = ""
+    log_level: str = "INFO"
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+    )
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        level = value.strip().upper()
+        if level not in {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"}:
+            raise ValueError(f"Unsupported LOG_LEVEL: {value}")
+        return level
+
+
+def configure_logging(
+    level: str = "INFO", log_file: Path = Path("logs/bot.log")
+) -> None:
+    logger.remove()
+    logger.add(sys.stderr, level=level)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        log_file,
+        level="DEBUG",
+        rotation="10 MB",
+        retention="14 days",
+        compression="zip",
     )
 
 
@@ -245,8 +271,14 @@ DATE_PATTERN = re.compile(
     r"(?<!\d)(?P<day>\d{1,2})[./-](?P<month>\d{1,2})"
     r"(?:[./-](?P<year>\d{4}))?(?!\d)"
 )
+TIME_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
 RELATIVE_DATE_PATTERN = re.compile(
     r"\b(?P<relative>сьогодні|вчора|today|yesterday)\b",
+    re.IGNORECASE,
+)
+INCOME_INTENT_PATTERN = re.compile(
+    r"\b(?:отрим\w*|зароб\w*|прода(?:в|ла|ли)|продаж\w*|"
+    r"дохід|доход\w*|оплат\w*|earned|received|sold|income|payment)\b",
     re.IGNORECASE,
 )
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -268,6 +300,19 @@ def decimal_from_text(value: str) -> Decimal:
     if amount <= 0:
         raise ValueError("Amount must be positive")
     return amount.quantize(Decimal("0.01"))
+
+
+def has_income_intent(text: str) -> bool:
+    return INCOME_INTENT_PATTERN.search(text) is not None
+
+
+def classify_income_message(
+    text: str, parsed_items: Sequence[ParsedIncome]
+) -> Literal["save", "confirm", "ignore"]:
+    has_amount = any(item.amount is not None for item in parsed_items)
+    if not has_amount:
+        return "ignore"
+    return "save" if has_income_intent(text) else "confirm"
 
 
 def detect_category(text: str, configured: Sequence[str]) -> str:
@@ -320,11 +365,12 @@ def parse_income_message(
 ) -> list[ParsedIncome]:
     normalized = re.sub(r"\s+", " ", text).strip()
     normalized_currencies = normalize_nearby_currency_typos(normalized)
+    normalized_without_time = TIME_PATTERN.sub(" ", normalized_currencies)
     current_date = today or datetime.now(UTC).date()
     income_date = current_date
-    text_without_date = normalized_currencies
-    date_match = DATE_PATTERN.search(normalized_currencies)
-    relative_match = RELATIVE_DATE_PATTERN.search(normalized_currencies)
+    text_without_date = normalized_without_time
+    date_match = DATE_PATTERN.search(normalized_without_time)
+    relative_match = RELATIVE_DATE_PATTERN.search(normalized_without_time)
     if date_match:
         year = int(date_match.group("year") or current_date.year)
         try:
@@ -507,15 +553,16 @@ class CsvStorage:
         self._atomic_write(frame, self.records_path)
         return updated
 
-    def delete_record_sync(self, record_id: str) -> None:
+    def delete_record_sync(self, record_id: str) -> bool:
         records = self.read_records_sync()
         if not (records["id"] == record_id).any():
-            raise KeyError(f"Record not found: {record_id}")
+            return False
         records = cast(pd.DataFrame, records.loc[records["id"] != record_id])
         notes = self.read_notes_sync()
         notes = cast(pd.DataFrame, notes.loc[notes["record_id"] != record_id])
         self._atomic_write(records, self.records_path)
         self._atomic_write(notes, self.notes_path)
+        return True
 
     def add_note_sync(self, note: RecordNote) -> RecordNote:
         if self.get_record_sync(note.record_id) is None:
@@ -542,9 +589,9 @@ class CsvStorage:
                 self.update_record_sync, record_id, changes, updated_by
             )
 
-    async def delete_record(self, record_id: str) -> None:
+    async def delete_record(self, record_id: str) -> bool:
         async with self._lock:
-            await asyncio.to_thread(self.delete_record_sync, record_id)
+            return await asyncio.to_thread(self.delete_record_sync, record_id)
 
     async def add_note(self, note: RecordNote) -> RecordNote:
         async with self._lock:
@@ -741,6 +788,7 @@ class RecordAction(CallbackData, prefix="record"):
 class EditState(StatesGroup):
     waiting_value = State()
     waiting_missing_amount = State()
+    waiting_income_confirmation = State()
 
 
 class EditLocks:
@@ -766,6 +814,12 @@ edit_locks = EditLocks()
 APP_CONFIG: AppConfig | None = None
 STORAGE: CsvStorage | None = None
 RECORDS_PAGE_SIZE = 8
+MENU_LABELS = {
+    "🗂 Записи",
+    "📊 Аналітика",
+    "📈 Діаграма",
+    "ℹ️ Допомога",
+}
 
 
 def app_context() -> tuple[AppConfig, CsvStorage]:
@@ -966,7 +1020,8 @@ async def status_handler(message: Message) -> None:
 
 @router.message(Command("start", "help"))
 @router.message(F.text == "ℹ️ Допомога")
-async def help_handler(message: Message) -> None:
+async def help_handler(message: Message, state: FSMContext) -> None:
+    await clear_interaction(message, state)
     await message.answer(
         "Надішли повідомлення про дохід звичайним текстом.\n\n"
         "Приклади:\n"
@@ -983,17 +1038,50 @@ async def help_handler(message: Message) -> None:
 
 @router.message(Command("cancel"))
 async def cancel_handler(message: Message, state: FSMContext) -> None:
+    await clear_interaction(message, state)
+    await message.answer("Дію скасовано.", reply_markup=main_menu())
+
+
+async def clear_interaction(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     if message.from_user and (record_id := data.get("record_id")):
         edit_locks.release(str(record_id), message.from_user.id)
     await state.clear()
-    await message.answer("Дію скасовано.", reply_markup=main_menu())
+
+
+async def handle_menu_during_interaction(message: Message, state: FSMContext) -> bool:
+    if message.text not in MENU_LABELS:
+        return False
+    await clear_interaction(message, state)
+    if message.text == "🗂 Записи":
+        await records_handler(message)
+    elif message.text == "📊 Аналітика":
+        await stats_handler(message)
+    elif message.text == "📈 Діаграма":
+        await chart_handler(message)
+    else:
+        await help_handler(message, state)
+    return True
+
+
+@router.message(EditState.waiting_income_confirmation)
+async def pending_confirmation_message_handler(
+    message: Message, state: FSMContext
+) -> None:
+    if not message.text:
+        return
+    if await handle_menu_during_interaction(message, state):
+        return
+    await state.clear()
+    await income_message_handler(message, state)
 
 
 @router.message(EditState.waiting_value)
 async def edit_value_handler(message: Message, state: FSMContext) -> None:
     config, storage = app_context()
     if not message.from_user or not message.text:
+        return
+    if await handle_menu_during_interaction(message, state):
         return
     data = await state.get_data()
     record_id = str(data["record_id"])
@@ -1009,6 +1097,7 @@ async def edit_value_handler(message: Message, state: FSMContext) -> None:
             )
             await storage.add_note(note)
             await state.clear()
+            edit_locks.release(record_id, message.from_user.id)
             await message.answer("📝 Нотатку додано.")
             return
         if field == "amount":
@@ -1042,9 +1131,19 @@ async def edit_value_handler(message: Message, state: FSMContext) -> None:
     except (ValueError, ValidationError) as error:
         await message.answer(f"Некоректне значення: {error}. Спробуй ще раз.")
         return
-    finally:
+    except KeyError:
+        await state.clear()
         edit_locks.release(record_id, message.from_user.id)
+        logger.bind(user_id=message.from_user.id, record_id=record_id).warning(
+            "Income record disappeared during editing"
+        )
+        await message.answer("Запис більше не існує.")
+        return
+    edit_locks.release(record_id, message.from_user.id)
     await state.clear()
+    logger.bind(user_id=message.from_user.id, record_id=record.id).info(
+        "Income record updated"
+    )
     await message.answer(format_record(record), reply_markup=record_keyboard(record))
 
 
@@ -1052,6 +1151,8 @@ async def edit_value_handler(message: Message, state: FSMContext) -> None:
 async def missing_amount_handler(message: Message, state: FSMContext) -> None:
     config, storage = app_context()
     if not message.from_user or not message.text:
+        return
+    if await handle_menu_during_interaction(message, state):
         return
     data = await state.get_data()
     try:
@@ -1236,10 +1337,19 @@ async def confirm_delete_callback(
     query: CallbackQuery, callback_data: RecordAction
 ) -> None:
     _, storage = app_context()
-    await storage.delete_record(callback_data.record_id)
-    await query.answer("Запис видалено.")
+    deleted = await storage.delete_record(callback_data.record_id)
+    text = "Запис видалено." if deleted else "Запис уже видалено."
+    if deleted:
+        logger.bind(user_id=query.from_user.id, record_id=callback_data.record_id).info(
+            "Income record deleted"
+        )
+    else:
+        logger.bind(
+            user_id=query.from_user.id, record_id=callback_data.record_id
+        ).warning("Income record was already deleted")
+    await query.answer(text)
     if isinstance(query.message, Message):
-        await query.message.edit_text("🗑 Запис видалено.")
+        await query.message.edit_text(f"🗑 {text}")
 
 
 @router.callback_query(RecordAction.filter(F.action == "cancel"))
@@ -1327,9 +1437,14 @@ async def income_message_handler(message: Message, state: FSMContext) -> None:
         categories=config.income.categories,
         today=datetime.now(ZoneInfo(config.bot.timezone)).date(),
     )
-    if parsed_items[0].amount is None:
-        item = parsed_items[0]
-        await state.set_state(EditState.waiting_missing_amount)
+    parsed_with_amount = [item for item in parsed_items if item.amount is not None]
+    decision = classify_income_message(message.text, parsed_items)
+    log = logger.bind(chat_id=message.chat.id, user_id=message.from_user.id)
+    if decision == "ignore":
+        log.debug("Message ignored because it has no monetary amount")
+        return
+    if decision == "confirm":
+        await state.set_state(EditState.waiting_income_confirmation)
         await state.set_data(
             {
                 "telegram_message_id": message.message_id,
@@ -1337,34 +1452,107 @@ async def income_message_handler(message: Message, state: FSMContext) -> None:
                 "user_id": message.from_user.id,
                 "username": message.from_user.username or "",
                 "original_text": message.text,
-                "category": item.category,
-                "description": item.description,
-                "income_date": item.income_date.isoformat(),
+                "items": [item.model_dump(mode="json") for item in parsed_with_amount],
             }
         )
-        await message.reply("Не знайшов суму. Надішли суму числом або /cancel.")
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Так",
+                        callback_data=RecordAction(
+                            action="confirm_income", record_id="-"
+                        ).pack(),
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Ні",
+                        callback_data=RecordAction(
+                            action="reject_income", record_id="-"
+                        ).pack(),
+                    ),
+                ]
+            ]
+        )
+        log.info("Ambiguous monetary message requires confirmation")
+        await message.reply("Записати як дохід?", reply_markup=keyboard)
         return
-    for index, item in enumerate(parsed_items):
+    await save_income_items(
+        message,
+        parsed_with_amount,
+        telegram_message_id=message.message_id,
+        user_id=message.from_user.id,
+        username=message.from_user.username or "",
+        original_text=message.text,
+    )
+    log.info("Income message saved automatically")
+
+
+async def save_income_items(
+    message: Message,
+    items: Sequence[ParsedIncome],
+    *,
+    telegram_message_id: int,
+    user_id: int,
+    username: str,
+    original_text: str,
+) -> None:
+    config, storage = app_context()
+    for index, item in enumerate(items):
         if item.amount is None:
             continue
         record = IncomeRecord(
-            telegram_message_id=message.message_id,
+            telegram_message_id=telegram_message_id,
             source_index=index,
             chat_id=message.chat.id,
-            user_id=message.from_user.id,
-            username=message.from_user.username or "",
-            original_text=message.text,
+            user_id=user_id,
+            username=username,
+            original_text=original_text,
             amount=item.amount,
             currency=item.currency,
             category=item.category,
             description=item.description,
             income_date=item.income_date,
-            updated_by=message.from_user.id,
+            updated_by=user_id,
         )
         record = await storage.create_record(record)
+        logger.bind(chat_id=message.chat.id, user_id=user_id, record_id=record.id).info(
+            "Income record persisted"
+        )
         await message.reply(
             format_success(record, config), reply_markup=success_keyboard(record)
         )
+
+
+@router.callback_query(RecordAction.filter(F.action == "confirm_income"))
+async def confirm_income_callback(query: CallbackQuery, state: FSMContext) -> None:
+    if not isinstance(query.message, Message):
+        await query.answer()
+        return
+    data = await state.get_data()
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list):
+        await query.answer("Підтвердження вже неактивне.", show_alert=True)
+        return
+    items = [ParsedIncome.model_validate(item) for item in raw_items]
+    await save_income_items(
+        query.message,
+        items,
+        telegram_message_id=int(data["telegram_message_id"]),
+        user_id=int(data["user_id"]),
+        username=str(data["username"]),
+        original_text=str(data["original_text"]),
+    )
+    await state.clear()
+    await query.answer("Дохід записано.")
+    await query.message.edit_reply_markup(reply_markup=None)
+
+
+@router.callback_query(RecordAction.filter(F.action == "reject_income"))
+async def reject_income_callback(query: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await query.answer("Не записано.")
+    if isinstance(query.message, Message):
+        await query.message.edit_reply_markup(reply_markup=None)
 
 
 # CLI
@@ -1373,8 +1561,10 @@ async def income_message_handler(message: Message, state: FSMContext) -> None:
 async def run_bot(config: AppConfig) -> None:
     global APP_CONFIG, STORAGE
     secrets = Secrets()
+    configure_logging(secrets.log_level)
     if not secrets.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is missing in .env")
+    logger.info("Starting income bot")
     APP_CONFIG = config
     STORAGE = CsvStorage(config.storage)
     bot = Bot(secrets.telegram_bot_token)
@@ -1392,7 +1582,13 @@ async def run_bot(config: AppConfig) -> None:
     )
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
-    await dispatcher.start_polling(bot)
+    try:
+        await dispatcher.start_polling(bot)
+    except Exception:
+        logger.exception("Income bot polling failed")
+        raise
+    finally:
+        logger.info("Income bot stopped")
 
 
 def build_parser() -> argparse.ArgumentParser:
