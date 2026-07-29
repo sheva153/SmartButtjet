@@ -1,0 +1,283 @@
+from collections.abc import Mapping
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from income_stats.models import ChatSetting, IncomeRecord, RecordNote
+from income_stats.repositories import RecordNotFoundError
+from income_stats.services.records_service import (
+    EditLocks,
+    RecordField,
+    RecordsService,
+)
+
+
+def make_record(index: int = 0, **changes: object) -> IncomeRecord:
+    values: dict[str, object] = {
+        "id": f"record-{index}",
+        "telegram_message_id": 10 + index,
+        "source_index": 0,
+        "chat_id": -100,
+        "user_id": 7,
+        "username": "felix",
+        "original_text": "500",
+        "amount": Decimal("500"),
+        "currency": "UAH",
+        "categories": ["other"],
+        "tags": [],
+        "income_date": date(2026, 7, 20) + timedelta(days=index),
+        "created_at": datetime(2026, 7, 20 + index, 10, tzinfo=UTC),
+        "updated_at": datetime(2026, 7, 20 + index, 10, tzinfo=UTC),
+        "updated_by": 7,
+    }
+    values.update(changes)
+    return IncomeRecord.model_validate(values)
+
+
+class FakeRecordsRepository:
+    def __init__(self, records: list[IncomeRecord]) -> None:
+        self.records = {record.id: record for record in records}
+        self.notes: list[RecordNote] = []
+
+    async def create_record(self, record: IncomeRecord) -> IncomeRecord:
+        self.records[record.id] = record
+        return record
+
+    async def get_record(self, record_id: str) -> IncomeRecord | None:
+        return self.records.get(record_id)
+
+    async def list_records(self, chat_id: int) -> list[IncomeRecord]:
+        return [record for record in self.records.values() if record.chat_id == chat_id]
+
+    async def update_record(
+        self,
+        record_id: str,
+        changes: Mapping[str, object],
+        updated_by: int,
+    ) -> IncomeRecord:
+        current = self.records.get(record_id)
+        if current is None:
+            raise RecordNotFoundError(record_id)
+        updated = IncomeRecord.model_validate(
+            {
+                **current.model_dump(),
+                **dict(changes),
+                "updated_by": updated_by,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.records[record_id] = updated
+        return updated
+
+    async def delete_record(self, record_id: str) -> bool:
+        return self.records.pop(record_id, None) is not None
+
+    async def add_note(self, note: RecordNote) -> RecordNote:
+        if note.record_id not in self.records:
+            raise RecordNotFoundError(note.record_id)
+        self.notes.append(note)
+        return note
+
+    async def list_notes(self, record_id: str) -> list[RecordNote]:
+        return [note for note in self.notes if note.record_id == record_id]
+
+    async def is_chat_enabled(self, chat_id: int) -> bool:
+        return True
+
+    async def set_chat_enabled(
+        self,
+        chat_id: int,
+        enabled: bool,
+        updated_by: int,
+    ) -> ChatSetting:
+        return ChatSetting(
+            chat_id=chat_id,
+            enabled=enabled,
+            updated_by=updated_by,
+        )
+
+
+@pytest.fixture
+def record() -> IncomeRecord:
+    return make_record()
+
+
+@pytest.fixture
+def repository(record: IncomeRecord) -> FakeRecordsRepository:
+    return FakeRecordsRepository([record])
+
+
+@pytest.fixture
+def records_service(repository: FakeRecordsRepository) -> RecordsService:
+    return RecordsService(repository, edit_lock_seconds=120)
+
+
+async def test_repeated_delete_has_stable_result(
+    records_service: RecordsService,
+    record: IncomeRecord,
+) -> None:
+    assert await records_service.delete(record.id) is True
+    assert await records_service.delete(record.id) is False
+
+
+async def test_invalid_edit_keeps_lock(
+    records_service: RecordsService,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    with pytest.raises(ValueError):
+        await records_service.update_field(record.id, "amount", "zero", 7)
+
+    assert not records_service.acquire_edit(record.id, user_id=8)
+
+
+@pytest.mark.parametrize(
+    ("field", "raw", "expected"),
+    [
+        ("amount", "1 500,25", Decimal("1500.25")),
+        ("currency", " usd ", "USD"),
+        ("categories", "Salary, Debt, salary", ["salary", "debt"]),
+        ("tags", "Card, cash, card", ["card", "cash"]),
+        ("income_date", "29.07.2026", date(2026, 7, 29)),
+        ("description", "  консультація  ", "консультація"),
+    ],
+)
+async def test_update_field_parses_and_releases_lock(
+    records_service: RecordsService,
+    record: IncomeRecord,
+    field: RecordField,
+    raw: str,
+    expected: object,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    updated = await records_service.update_field(
+        record.id,
+        field,
+        raw,
+        user_id=7,
+        today=date(2026, 7, 29),
+    )
+
+    assert getattr(updated, field) == expected
+    assert records_service.acquire_edit(record.id, user_id=8)
+
+
+async def test_missing_update_releases_lock(
+    records_service: RecordsService,
+    repository: FakeRecordsRepository,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+    repository.records.clear()
+
+    with pytest.raises(RecordNotFoundError):
+        await records_service.update_field(
+            record.id,
+            "description",
+            "new",
+            user_id=7,
+        )
+
+    assert records_service.acquire_edit(record.id, user_id=8)
+
+
+async def test_invalid_model_value_keeps_lock(
+    records_service: RecordsService,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    with pytest.raises(ValidationError):
+        await records_service.update_field(
+            record.id,
+            "currency",
+            "EURO",
+            user_id=7,
+        )
+
+    assert not records_service.acquire_edit(record.id, user_id=8)
+
+
+async def test_add_note_translates_missing_record_and_releases_lock(
+    records_service: RecordsService,
+    repository: FakeRecordsRepository,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+    repository.records.clear()
+
+    with pytest.raises(RecordNotFoundError):
+        await records_service.add_note(
+            record.id,
+            user_id=7,
+            username="felix",
+            text="note",
+        )
+
+    assert records_service.acquire_edit(record.id, user_id=8)
+
+
+async def test_note_success_and_missing_list_have_domain_outcomes(
+    records_service: RecordsService,
+    repository: FakeRecordsRepository,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+    note = await records_service.add_note(
+        record.id,
+        user_id=7,
+        username="felix",
+        text="  paid in cash  ",
+    )
+
+    assert note.text == "paid in cash"
+    assert await records_service.list_notes(record.id) == [note]
+    assert records_service.acquire_edit(record.id, user_id=8)
+
+    repository.records.clear()
+    with pytest.raises(RecordNotFoundError):
+        await records_service.list_notes(record.id)
+
+
+async def test_page_is_latest_first_and_clamped() -> None:
+    records = [make_record(index) for index in range(5)]
+    service = RecordsService(FakeRecordsRepository(records), page_size=2)
+
+    first = await service.page(-100, page=-5)
+    last = await service.page(-100, page=99)
+
+    assert [record.id for record in first.records] == ["record-4", "record-3"]
+    assert first.page == 0
+    assert first.total_pages == 3
+    assert [record.id for record in last.records] == ["record-0"]
+    assert last.page == 2
+
+
+def test_lock_cancel_navigation_and_expiry_release() -> None:
+    now = datetime(2026, 7, 29, 10, tzinfo=UTC)
+    locks = EditLocks(clock=lambda: now)
+    service = RecordsService(
+        FakeRecordsRepository([]),
+        edit_lock_seconds=60,
+        edit_locks=locks,
+    )
+    assert service.acquire_edit("one", user_id=7)
+    service.cancel_edit("one", user_id=7)
+    assert service.acquire_edit("one", user_id=8)
+    service.navigate_away("one", user_id=8)
+    assert service.acquire_edit("one", user_id=9)
+
+    expired_locks = EditLocks(clock=lambda: now)
+    assert expired_locks.acquire("two", user_id=7, seconds=0)
+    assert expired_locks.acquire("two", user_id=8, seconds=60)
+
+
+def test_page_size_is_bounded() -> None:
+    with pytest.raises(ValueError, match="page_size"):
+        RecordsService(FakeRecordsRepository([]), page_size=0)
+    with pytest.raises(ValueError, match="page_size"):
+        RecordsService(FakeRecordsRepository([]), page_size=101)

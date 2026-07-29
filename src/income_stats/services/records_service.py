@@ -1,0 +1,269 @@
+"""Record browsing, editing, notes, deletion, and edit locks."""
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from re import Pattern
+from re import compile as compile_pattern
+from typing import Literal
+
+from income_stats.models import IncomeRecord, RecordNote
+from income_stats.repositories import RecordNotFoundError, RecordsRepository
+
+RecordField = Literal[
+    "amount",
+    "currency",
+    "categories",
+    "tags",
+    "income_date",
+    "description",
+]
+
+_EDITABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "amount",
+        "currency",
+        "categories",
+        "tags",
+        "income_date",
+        "description",
+    }
+)
+_DATE_INPUT_PATTERN: Pattern[str] = compile_pattern(
+    r"(?P<day>\d{1,2})[./-](?P<month>\d{1,2})"
+    r"(?:[./-](?P<year>\d{4}))?"
+)
+_DECIMAL_PLACES = Decimal("0.01")
+
+
+@dataclass(frozen=True)
+class RecordPage:
+    records: list[IncomeRecord]
+    page: int
+    total_pages: int
+
+
+class EditLocks:
+    """In-memory record edit ownership with deterministic expiry."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._locks: dict[str, tuple[int, datetime]] = {}
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    def _active_owner(
+        self,
+        record_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[int, datetime] | None:
+        owner = self._locks.get(record_id)
+        if owner is not None and owner[1] <= (now or self._clock()):
+            self._locks.pop(record_id, None)
+            return None
+        return owner
+
+    def acquire(self, record_id: str, user_id: int, seconds: int) -> bool:
+        now = self._clock()
+        owner = self._active_owner(record_id, now=now)
+        if owner is not None and owner[0] != user_id:
+            return False
+        self._locks[record_id] = (
+            user_id,
+            now + timedelta(seconds=seconds),
+        )
+        return True
+
+    def release(self, record_id: str, user_id: int) -> None:
+        owner = self._active_owner(record_id)
+        if owner is not None and owner[0] == user_id:
+            self._locks.pop(record_id, None)
+
+    def release_record(self, record_id: str) -> None:
+        self._locks.pop(record_id, None)
+
+    def is_owned_by(self, record_id: str, user_id: int) -> bool:
+        owner = self._active_owner(record_id)
+        return owner is not None and owner[0] == user_id
+
+
+class RecordsService:
+    """Coordinate record operations without Telegram or CSV dependencies."""
+
+    def __init__(
+        self,
+        repository: RecordsRepository,
+        *,
+        edit_lock_seconds: int = 120,
+        page_size: int = 8,
+        edit_locks: EditLocks | None = None,
+    ) -> None:
+        if not 1 <= page_size <= 100:
+            raise ValueError("page_size must be between 1 and 100")
+        if edit_lock_seconds < 1:
+            raise ValueError("edit_lock_seconds must be positive")
+        self._repository = repository
+        self._edit_lock_seconds = edit_lock_seconds
+        self._page_size = page_size
+        self._edit_locks = edit_locks or EditLocks()
+
+    async def get_record(self, record_id: str) -> IncomeRecord | None:
+        return await self._repository.get_record(record_id)
+
+    async def get(self, record_id: str) -> IncomeRecord | None:
+        return await self.get_record(record_id)
+
+    async def list_records(self, chat_id: int) -> list[IncomeRecord]:
+        records = await self._repository.list_records(chat_id)
+        return sorted(
+            records,
+            key=lambda record: (record.income_date, record.created_at),
+            reverse=True,
+        )
+
+    async def page(self, chat_id: int, page: int = 0) -> RecordPage:
+        records = await self.list_records(chat_id)
+        total_pages = max(
+            1,
+            (len(records) + self._page_size - 1) // self._page_size,
+        )
+        bounded_page = max(0, min(page, total_pages - 1))
+        start = bounded_page * self._page_size
+        return RecordPage(
+            records=records[start : start + self._page_size],
+            page=bounded_page,
+            total_pages=total_pages,
+        )
+
+    async def list_notes(self, record_id: str) -> list[RecordNote]:
+        if await self._repository.get_record(record_id) is None:
+            raise RecordNotFoundError(record_id)
+        return await self._repository.list_notes(record_id)
+
+    def acquire_edit(self, record_id: str, user_id: int) -> bool:
+        return self._edit_locks.acquire(
+            record_id,
+            user_id,
+            self._edit_lock_seconds,
+        )
+
+    def release_edit(self, record_id: str, user_id: int) -> None:
+        self._edit_locks.release(record_id, user_id)
+
+    def cancel_edit(self, record_id: str, user_id: int) -> None:
+        self.release_edit(record_id, user_id)
+
+    def navigate_away(self, record_id: str, user_id: int) -> None:
+        self.release_edit(record_id, user_id)
+
+    async def update_field(
+        self,
+        record_id: str,
+        field: RecordField,
+        raw_value: str,
+        user_id: int,
+        *,
+        today: date | None = None,
+    ) -> IncomeRecord:
+        if field not in _EDITABLE_FIELDS:
+            raise ValueError(f"Unsupported record field: {field}")
+        value = self._parse_field(field, raw_value, today=today)
+        current = await self._repository.get_record(record_id)
+        if current is None:
+            self.release_edit(record_id, user_id)
+            raise RecordNotFoundError(record_id)
+        validated = IncomeRecord.model_validate(
+            {
+                **current.model_dump(),
+                field: value,
+            }
+        )
+        value = getattr(validated, field)
+        try:
+            updated = await self._repository.update_record(
+                record_id,
+                {field: value},
+                updated_by=user_id,
+            )
+        except RecordNotFoundError:
+            self.release_edit(record_id, user_id)
+            raise
+        self.release_edit(record_id, user_id)
+        return updated
+
+    async def add_note(
+        self,
+        record_id: str,
+        *,
+        user_id: int,
+        username: str,
+        text: str,
+    ) -> RecordNote:
+        note = RecordNote(
+            record_id=record_id,
+            user_id=user_id,
+            username=username,
+            text=text,
+        )
+        try:
+            saved = await self._repository.add_note(note)
+        except RecordNotFoundError:
+            self.release_edit(record_id, user_id)
+            raise
+        self.release_edit(record_id, user_id)
+        return saved
+
+    async def delete(self, record_id: str) -> bool:
+        deleted = await self._repository.delete_record(record_id)
+        self._edit_locks.release_record(record_id)
+        return deleted
+
+    @staticmethod
+    def _parse_field(
+        field: RecordField,
+        raw_value: str,
+        *,
+        today: date | None,
+    ) -> object:
+        raw = raw_value.strip()
+        if field == "amount":
+            return _parse_amount(raw)
+        if field == "currency":
+            return raw.upper()
+        if field in {"categories", "tags"}:
+            if not raw:
+                return []
+            return [value.strip() for value in raw.split(",")]
+        if field == "income_date":
+            return _parse_date(raw, today=today)
+        return raw
+
+
+def _parse_amount(raw: str) -> Decimal:
+    compact = raw.replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    try:
+        amount = Decimal(compact)
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("Amount must be positive")
+        return amount.quantize(_DECIMAL_PLACES)
+    except InvalidOperation as error:
+        raise ValueError(f"Invalid amount: {raw}") from error
+
+
+def _parse_date(raw: str, *, today: date | None) -> date:
+    matched = _DATE_INPUT_PATTERN.fullmatch(raw)
+    if matched is None:
+        raise ValueError("Date must use DD.MM or DD.MM.YYYY")
+    current_date = today or datetime.now(UTC).date()
+    try:
+        return date(
+            int(matched.group("year") or current_date.year),
+            int(matched.group("month")),
+            int(matched.group("day")),
+        )
+    except ValueError as error:
+        raise ValueError(f"Invalid income date: {raw}") from error
