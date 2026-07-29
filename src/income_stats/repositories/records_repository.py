@@ -21,6 +21,16 @@ from income_stats.models import ChatSetting, IncomeRecord, RecordNote, normalize
 RECORD_COLUMNS = list(IncomeRecord.model_fields)
 NOTE_COLUMNS = list(RecordNote.model_fields)
 CHAT_SETTING_COLUMNS = list(ChatSetting.model_fields)
+EDITABLE_RECORD_FIELDS = frozenset(
+    {
+        "amount",
+        "currency",
+        "categories",
+        "tags",
+        "income_date",
+        "description",
+    }
+)
 
 _CSV_READ_ERRORS = (
     OSError,
@@ -147,10 +157,11 @@ class CsvRecordsRepository:
                 frame.to_csv(stream, index=False)
             temporary.replace(path)
         except (OSError, UnicodeError) as error:
+            raise ValueError(f"Cannot write CSV {path}: {error}") from error
+        finally:
             if temporary is not None:
                 with suppress(OSError):
                     temporary.unlink(missing_ok=True)
-            raise ValueError(f"Cannot write CSV {path}: {error}") from error
 
     @classmethod
     def _migrate_records(
@@ -257,6 +268,11 @@ class CsvRecordsRepository:
         updated_by: int,
     ) -> IncomeRecord:
         with self._sync_lock:
+            invalid_fields = set(changes) - EDITABLE_RECORD_FIELDS
+            if invalid_fields:
+                raise ValueError(
+                    f"Record fields cannot be updated: {sorted(invalid_fields)}"
+                )
             frame = self._read_records_unlocked()
             indexes = frame.index[frame["id"] == record_id].tolist()
             if not indexes:
@@ -280,13 +296,23 @@ class CsvRecordsRepository:
     def delete_record_sync(self, record_id: str) -> bool:
         with self._sync_lock:
             records = self._read_records_unlocked()
-            if not (records["id"] == record_id).any():
+            notes = self._read(self.notes_path, NOTE_COLUMNS)
+            record_exists = bool((records["id"] == record_id).any())
+            related_notes_exist = bool((notes["record_id"] == record_id).any())
+
+            if not record_exists:
+                if related_notes_exist:
+                    notes = cast(
+                        pd.DataFrame,
+                        notes.loc[notes["record_id"] != record_id].copy(),
+                    )
+                    self._atomic_write(notes, self.notes_path)
                 return False
+
             records = cast(
                 pd.DataFrame,
                 records.loc[records["id"] != record_id].copy(),
             )
-            notes = self._read(self.notes_path, NOTE_COLUMNS)
             notes = cast(
                 pd.DataFrame,
                 notes.loc[notes["record_id"] != record_id].copy(),

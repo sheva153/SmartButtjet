@@ -121,6 +121,22 @@ def test_update_is_pydantic_validated(
     assert csv_repository.get_record_sync(saved_record.id) == saved_record
 
 
+@pytest.mark.parametrize("field", ["ammount", "id", "chat_id", "source_index"])
+def test_update_rejects_unknown_and_identity_fields(
+    csv_repository: CsvRecordsRepository,
+    saved_record: IncomeRecord,
+    field: str,
+) -> None:
+    with pytest.raises(ValueError, match="cannot be updated"):
+        csv_repository.update_record_sync(
+            saved_record.id,
+            {field: 999},
+            updated_by=9,
+        )
+
+    assert csv_repository.get_record_sync(saved_record.id) == saved_record
+
+
 def test_update_missing_record_raises_domain_error(
     csv_repository: CsvRecordsRepository,
 ) -> None:
@@ -141,6 +157,52 @@ def test_delete_is_idempotent_and_removes_notes(
     assert csv_repository.delete_record_sync(saved_record.id) is True
     assert csv_repository.delete_record_sync(saved_record.id) is False
     assert csv_repository.read_notes_sync().empty
+
+
+def test_delete_retry_cleans_notes_after_second_write_failure(
+    csv_repository: CsvRecordsRepository,
+    saved_record: IncomeRecord,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csv_repository.add_note_sync(
+        RecordNote(record_id=saved_record.id, user_id=7, text="готівкою")
+    )
+    original_write = csv_repository._atomic_write
+    calls = 0
+
+    def fail_second_write(frame: pd.DataFrame, path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("notes write failed")
+        original_write(frame, path)
+
+    monkeypatch.setattr(csv_repository, "_atomic_write", fail_second_write)
+
+    with pytest.raises(OSError, match="notes write failed"):
+        csv_repository.delete_record_sync(saved_record.id)
+
+    monkeypatch.setattr(csv_repository, "_atomic_write", original_write)
+    assert csv_repository.delete_record_sync(saved_record.id) is False
+    assert csv_repository.read_notes_sync().empty
+
+
+def test_atomic_write_cleans_temporary_file_on_unexpected_error(
+    csv_repository: CsvRecordsRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_to_csv(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", fail_to_csv)
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        csv_repository._atomic_write(
+            pd.DataFrame(columns=["value"]),
+            csv_repository.records_path,
+        )
+
+    assert list(csv_repository.records_path.parent.glob("*.tmp")) == []
 
 
 def test_note_for_missing_record_raises_domain_error(
