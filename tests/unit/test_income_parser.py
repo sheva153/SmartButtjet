@@ -78,6 +78,19 @@ def test_only_valid_clock_time_is_a_protected_span() -> None:
     assert all(find_protected_spans(text) == [] for text in invalid)
 
 
+def test_protected_spans_use_configured_income_aliases(
+    income_config: IncomeConfig,
+) -> None:
+    text = "на вул. Шевченка зп 500"
+
+    spans = find_protected_spans(text, income_config)
+
+    assert all(text[start:end] != "вул. Шевченка зп 500" for start, end in spans)
+    assert parse_income_message(text, income_config, today=date(2026, 7, 29))[
+        0
+    ].amount == Decimal("500.00")
+
+
 def test_money_next_to_phone_is_kept(income_config: IncomeConfig) -> None:
     messages = [
         "отримав 500, телефон +380 67 123 45 67",

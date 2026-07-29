@@ -264,10 +264,13 @@ def _protected_context(
     )
 
 
-def find_protected_spans(text: str) -> list[tuple[int, int]]:
+def find_protected_spans(
+    text: str,
+    config: IncomeConfig | None = None,
+) -> list[tuple[int, int]]:
     """Return merged source offsets that cannot be interpreted as money."""
     current_date = datetime.now(UTC).date()
-    return list(_protected_context(text, current_date).spans)
+    return list(_protected_context(text, current_date, config).spans)
 
 
 def _decimal_from_text(value: str) -> Decimal | None:
