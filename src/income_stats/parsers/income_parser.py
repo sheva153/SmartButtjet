@@ -76,7 +76,7 @@ INTERNATIONAL_PHONE_PATTERN = re.compile(r"(?<![\w\d])\+(?:\d[\s().-]*){7,14}\d(
 PHONE_CONTEXT_PATTERN = re.compile(
     r"(?ix)(?<!\w)(?:тел(?:ефон)?|моб(?:ільний)?|"
     r"tel(?:ephone)?|phone|mobile)(?!\w)"
-    r"\.?\s*:?\s*\(?\d{2}\)?(?:[\s.-]*\d){7}(?!\d)"
+    r"\.?\s*:?\s*\(?\d{2,3}\)?(?:[\s.-]*\d){7}(?!\d)"
 )
 DATE_PATTERN = re.compile(
     r"(?<![\d./-])(?P<day>\d{1,2})(?P<separator>[./-])"
@@ -104,8 +104,9 @@ STREET_ADDRESS_CANDIDATE_PATTERN = re.compile(
 )
 STREET_INCOME_CONTEXT_PATTERN = re.compile(
     r"(?i)(?<!\w)(?:отрим\w*|зароб\w*|прода\w*|продаж\w*|"
-    r"оплат\w*|дохід|доход\w*|earned|received|sold|income|"
-    r"payment|paid)(?!\w)"
+    r"оплат\w*|дохід|доход\w*|повернул\w*|подар\w*|"
+    r"переказ\w*|earned|received|sold|income|payment|paid|"
+    r"gifted|transferred)(?!\w)"
 )
 IPV4_LIKE_PATTERN = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 ISO_DATE_LIKE_PATTERN = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
@@ -144,17 +145,42 @@ def _overlaps(
     return index > 0 and spans[index - 1][1] > start
 
 
-def _address_spans(text: str) -> list[tuple[int, int]]:
+def _has_configured_income_alias(
+    text: str,
+    config: IncomeConfig | None,
+) -> bool:
+    if config is None:
+        return False
+    lowered = text.casefold()
+    alias_groups = [*config.categories.values(), *config.tags.values()]
+    return any(
+        re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", lowered)
+        for aliases in alias_groups
+        for alias in aliases
+    )
+
+
+def _address_spans(
+    text: str,
+    config: IncomeConfig | None,
+) -> list[tuple[int, int]]:
     spans = [match.span() for match in UNIT_ADDRESS_PATTERN.finditer(text)]
     for match in STREET_ADDRESS_CANDIDATE_PATTERN.finditer(text):
         street_name = match.group("street_name") or ""
-        if street_name and STREET_INCOME_CONTEXT_PATTERN.search(street_name):
+        if street_name and (
+            STREET_INCOME_CONTEXT_PATTERN.search(street_name)
+            or _has_configured_income_alias(street_name, config)
+        ):
             continue
         spans.append(match.span())
     return spans
 
 
-def _protected_context(text: str, current_date: date) -> _ProtectedContext:
+def _protected_context(
+    text: str,
+    current_date: date,
+    config: IncomeConfig | None = None,
+) -> _ProtectedContext:
     base_patterns = (
         TIME_PATTERN,
         UKRAINIAN_PHONE_PATTERN,
@@ -170,7 +196,7 @@ def _protected_context(text: str, current_date: date) -> _ProtectedContext:
                 for pattern in base_patterns
                 for match in pattern.finditer(text)
             ),
-            *_address_spans(text),
+            *_address_spans(text, config),
         ]
     )
     base_spans_tuple = tuple(base_spans)
@@ -179,7 +205,11 @@ def _protected_context(text: str, current_date: date) -> _ProtectedContext:
         match.span()
         for match in MONEY_PATTERN.finditer(text)
         if "." in match.group("amount")
-        and (match.group("prefix") or match.group("suffix"))
+        and (
+            match.group("prefix")
+            or match.group("suffix")
+            or _known_nearby_currency(text, match.span())
+        )
     )
     explicit_currency_starts = tuple(start for start, _ in explicit_currency_spans)
 
@@ -256,7 +286,10 @@ def _decimal_from_text(value: str) -> Decimal | None:
     return quantized
 
 
-def _known_nearby_currency(text: str, span: tuple[int, int]) -> str | None:
+def _known_nearby_currency(
+    text: str,
+    span: tuple[int, int],
+) -> tuple[str, tuple[int, int]] | None:
     start, end = span
     before = re.search(
         rf"([^\W\d_]+){CURRENCY_SEPARATOR}$",
@@ -268,22 +301,23 @@ def _known_nearby_currency(text: str, span: tuple[int, int]) -> str | None:
         text[end:],
         re.UNICODE,
     )
-    for nearby in (after, before):
+    for nearby, offset in ((after, end), (before, 0)):
         if nearby is None:
             continue
         word = nearby.group(1).casefold()
         if currency := KNOWN_CURRENCY_TYPOS.get(word):
-            return currency
+            token_start, token_end = nearby.span(1)
+            return currency, (offset + token_start, offset + token_end)
     return None
 
 
 def _currency_for_match(text: str, match: re.Match[str], default_currency: str) -> str:
     token = (match.group("prefix") or match.group("suffix") or "").casefold()
-    return (
-        CURRENCY_ALIASES.get(token)
-        or _known_nearby_currency(text, match.span())
-        or default_currency
-    )
+    if currency := CURRENCY_ALIASES.get(token):
+        return currency
+    if typo := _known_nearby_currency(text, match.span()):
+        return typo[0]
+    return default_currency
 
 
 def _detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
@@ -318,7 +352,7 @@ def parse_income_message(
 ) -> list[ParsedIncome]:
     """Parse every unprotected amount in a message as income."""
     current_date = today or datetime.now(UTC).date()
-    context = _protected_context(text, current_date)
+    context = _protected_context(text, current_date, config)
     if context.invalid_dates:
         raise ValueError(f"Invalid income date: {context.invalid_dates[0]}")
     candidates: list[tuple[re.Match[str], Decimal]] = []
@@ -334,6 +368,11 @@ def parse_income_message(
     categories = _detect_labels(text, config.categories) or ["other"]
     tags = _detect_labels(text, config.tags)
     removed_spans = [match.span() for match, _ in candidates]
+    removed_spans.extend(
+        typo[1]
+        for match, _ in candidates
+        if (typo := _known_nearby_currency(text, match.span()))
+    )
     removed_spans.extend(context.temporal_spans)
     description = re.sub(
         r"\s+",

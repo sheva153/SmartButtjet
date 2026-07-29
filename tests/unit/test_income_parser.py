@@ -43,6 +43,8 @@ def income_config() -> IncomeConfig:
         "мобільний 67-123-45-67",
         "phone 67 123 45 67",
         "mobile 67-123-45-67",
+        "telephone 202 555 0123",
+        "mobile (202) 555-0123",
         "call me at +1 (202) 555-0123",
         "вул. Шевченка, будинок 12, квартира 35",
         "будинок №12",
@@ -116,6 +118,11 @@ def test_address_fraction_is_not_used_as_an_income_date(
     "text",
     [
         "на вул. Шевченка отримав 500",
+        "на вул. Шевченка зп 500",
+        "на вул. Шевченка зарплата 500",
+        "на вул. Шевченка повернули борг 500",
+        "на вул. Шевченка подарували 500",
+        "на вул. Шевченка переказали 500",
         "вул. отримав 500",
         "street earned 500",
         "продав квартиру отримав 500 грн",
@@ -129,6 +136,28 @@ def test_address_words_do_not_swallow_later_money(
     income_config: IncomeConfig,
 ) -> None:
     parsed = parse_income_message(text, income_config)
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "street Baker salary 500",
+        "street Baker card payment 500",
+    ],
+)
+def test_configured_english_aliases_stop_street_protection(text: str) -> None:
+    config = IncomeConfig(
+        default_currency="GBP",
+        categories={
+            "salary": ["salary"],
+            "other": [],
+        },
+        tags={"card": ["card payment"]},
+    )
+
+    parsed = parse_income_message(text, config)
 
     assert [item.amount for item in parsed] == [Decimal("500.00")]
 
@@ -187,9 +216,10 @@ def test_unlisted_nearby_words_keep_default_currency(
     word: str,
     income_config: IncomeConfig,
 ) -> None:
-    parsed = parse_income_message(f"100 {word}", income_config)
+    non_uah_config = income_config.model_copy(update={"default_currency": "GBP"})
+    parsed = parse_income_message(f"100 {word}", non_uah_config)
 
-    assert parsed[0].currency == "UAH"
+    assert parsed[0].currency == "GBP"
 
 
 @pytest.mark.parametrize("text", ["100 usda", "100 eurocentric"])
@@ -353,6 +383,31 @@ def test_explicit_currency_dot_decimal_wins_over_date_syntax(
         Decimal(text.replace("$", "").split()[0]).quantize(Decimal("0.01"))
     ]
     assert parsed[0].currency == currency
+
+
+@pytest.mark.parametrize(
+    ("text", "amount", "currency"),
+    [
+        ("99.99 жвро", Decimal("99.99"), "EUR"),
+        ("жвро 99.99", Decimal("99.99"), "EUR"),
+        ("99.99\nжвро", Decimal("99.99"), "EUR"),
+        ("50.25 доллар", Decimal("50.25"), "USD"),
+        ("10.07 euroo", Decimal("10.07"), "EUR"),
+    ],
+)
+def test_known_typo_dot_decimal_wins_and_is_removed_from_description(
+    text: str,
+    amount: Decimal,
+    currency: str,
+    income_config: IncomeConfig,
+) -> None:
+    non_uah_config = income_config.model_copy(update={"default_currency": "GBP"})
+
+    parsed = parse_income_message(text, non_uah_config)
+
+    assert [item.amount for item in parsed] == [amount]
+    assert parsed[0].currency == currency
+    assert parsed[0].description == ""
 
 
 def test_bare_valid_date_remains_protected(income_config: IncomeConfig) -> None:
