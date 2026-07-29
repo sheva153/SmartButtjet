@@ -34,9 +34,17 @@ def income_config() -> IncomeConfig:
         "зустріч о 15:30",
         "зустріч о 23:59",
         "телефон +380 67 123 45 67",
+        "телефон +380-67-123-45-67",
         "телефон 067-123-45-67",
+        "телефон 67 123 45 67",
+        "тел. 67-123-45-67",
+        "tel 67 123 45 67",
         "call me at +1 (202) 555-0123",
         "вул. Шевченка, будинок 12, квартира 35",
+        "будинок №12",
+        "apartment #35",
+        "вул. Шевченка, 12",
+        "street Baker 221B",
         "street Baker, house 221B, apartment 5",
         "подія 10.07.2026",
     ],
@@ -54,11 +62,15 @@ def test_protected_spans_keep_original_positions() -> None:
 
 
 def test_money_next_to_phone_is_kept(income_config: IncomeConfig) -> None:
-    parsed = parse_income_message(
-        "отримав 500, телефон +380 67 123 45 67", income_config
-    )
+    messages = [
+        "отримав 500, телефон +380 67 123 45 67",
+        "отримав 500, телефон +380-67-123-45-67",
+        "отримав 500, телефон +44-20-7946-0958",
+    ]
 
-    assert [item.amount for item in parsed] == [Decimal("500.00")]
+    for message in messages:
+        parsed = parse_income_message(message, income_config)
+        assert [item.amount for item in parsed] == [Decimal("500.00")]
 
 
 def test_money_next_to_address_and_time_is_kept(
@@ -70,6 +82,38 @@ def test_money_next_to_address_and_time_is_kept(
     )
 
     assert [item.amount for item in parsed] == [Decimal("1500.00")]
+
+
+def test_address_fraction_is_not_used_as_an_income_date(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "будинок 12/3 отримав 500",
+        income_config,
+        today=date(2026, 7, 29),
+    )
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+    assert parsed[0].income_date == date(2026, 7, 29)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "на вул. Шевченка отримав 500",
+        "продав квартиру отримав 500 грн",
+        "будинок продав за 500",
+        "apartment sold for 500 USD",
+        "квиток 500",
+    ],
+)
+def test_address_words_do_not_swallow_later_money(
+    text: str,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(text, income_config)
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
 
 
 @pytest.mark.parametrize(
@@ -115,12 +159,55 @@ def test_nearby_currency_typos_remain_supported(
     assert parsed[0].currency == currency
 
 
+@pytest.mark.parametrize("text", ["100 usda", "100 eurocentric"])
+def test_currency_aliases_do_not_match_word_prefixes(
+    text: str,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(text, income_config)
+
+    assert parsed[0].amount == Decimal("100.00")
+    assert parsed[0].currency == "UAH"
+
+
 def test_standalone_hour_remains_an_amount_candidate(
     income_config: IncomeConfig,
 ) -> None:
     parsed = parse_income_message("зустріч о 15", income_config)
 
     assert [item.amount for item in parsed] == [Decimal("15.00")]
+
+
+@pytest.mark.parametrize(
+    "structured",
+    [
+        "123.456",
+        "192.168.1.1",
+        "2026-07-29",
+        "25:00",
+        "123456789012345678901234567890",
+        "1 234 567 890 123 456 789",
+    ],
+)
+def test_structured_or_unreasonable_tokens_are_not_partially_parsed(
+    structured: str,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        f"службове значення {structured}, отримав 500",
+        income_config,
+        today=date(2026, 7, 29),
+    )
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+
+
+def test_invalid_candidate_does_not_abort_later_valid_money(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message("службове значення 0, отримав 500", income_config)
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
 
 
 def test_multiple_amounts_create_multiple_items(income_config: IncomeConfig) -> None:
@@ -134,6 +221,14 @@ def test_multiple_amounts_create_multiple_items(income_config: IncomeConfig) -> 
     ]
     assert all(item.categories == ["sales"] for item in parsed)
     assert all(item.tags == ["cash"] for item in parsed)
+
+
+def test_multiple_spaces_are_valid_thousands_grouping(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message("зп 20  000", income_config)
+
+    assert [item.amount for item in parsed] == [Decimal("20000.00")]
 
 
 def test_multiple_categories_and_tags_are_detected(
@@ -184,10 +279,23 @@ def test_income_date_is_extracted_without_becoming_an_amount(
     assert parsed[0].income_date == expected
 
 
-def test_invalid_absolute_date_is_rejected(income_config: IncomeConfig) -> None:
-    with pytest.raises(ValueError, match="Invalid income date"):
-        parse_income_message(
-            "Отримав 500 грн 32.13",
-            income_config,
-            today=date(2026, 7, 24),
-        )
+def test_invalid_absolute_date_does_not_abort_valid_money(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "Отримав 500 грн 32.13",
+        income_config,
+        today=date(2026, 7, 24),
+    )
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+    assert parsed[0].income_date == date(2026, 7, 24)
+
+
+def test_description_is_truncated_to_record_limit(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(f"{'x' * 1100} 500", income_config)
+
+    assert len(parsed[0].description) == 1000
+    assert parsed[0].description == "x" * 1000

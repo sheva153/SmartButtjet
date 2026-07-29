@@ -1,6 +1,8 @@
 """Deterministic income parsing around protected numeric spans."""
 
 import re
+from bisect import bisect_left
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import get_close_matches
@@ -32,38 +34,84 @@ CURRENCY_ALIASES = {
 FUZZY_CURRENCY_WORDS = {
     alias: currency
     for alias, currency in CURRENCY_ALIASES.items()
-    if alias.isalpha() and len(alias) >= 3
+    if alias.isalpha() and len(alias) >= 4
 }
-CURRENCY_TOKEN = "|".join(
-    sorted((re.escape(alias) for alias in CURRENCY_ALIASES), key=len, reverse=True)
+ALPHABETIC_CURRENCY_TOKEN = "|".join(
+    sorted(
+        (re.escape(alias) for alias in CURRENCY_ALIASES if alias.isalpha()),
+        key=len,
+        reverse=True,
+    )
 )
-AMOUNT_TOKEN = r"(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d{1,2})?"
+SYMBOL_CURRENCY_TOKEN = "|".join(
+    re.escape(alias) for alias in CURRENCY_ALIASES if not alias.isalpha()
+)
+PREFIX_CURRENCY_TOKEN = (
+    rf"(?:{SYMBOL_CURRENCY_TOKEN}|"
+    rf"(?<!\w)(?:{ALPHABETIC_CURRENCY_TOKEN})(?![^\W\d_]))"
+)
+SUFFIX_CURRENCY_TOKEN = (
+    rf"(?:{SYMBOL_CURRENCY_TOKEN}|"
+    rf"(?<![^\W\d_])(?:{ALPHABETIC_CURRENCY_TOKEN})(?!\w))"
+)
+AMOUNT_TOKEN = (
+    r"(?:\d{1,3}(?:[ \t\u00a0]+\d{3}){1,5}|\d{1,18})"
+    r"(?:[.,]\d{1,2})?"
+)
 MONEY_PATTERN = re.compile(
-    rf"(?:(?P<prefix>{CURRENCY_TOKEN})\s*)?"
+    r"(?<![\w\d.,:/-])"
+    rf"(?:(?P<prefix>{PREFIX_CURRENCY_TOKEN})[ \t]*)?"
     rf"(?P<amount>{AMOUNT_TOKEN})"
-    rf"(?:\s*(?P<suffix>{CURRENCY_TOKEN}))?",
+    rf"(?:[ \t]*(?P<suffix>{SUFFIX_CURRENCY_TOKEN}))?"
+    r"(?!\w)(?![.,:/-]\d)",
     re.IGNORECASE,
 )
 
-TIME_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
+TIME_LIKE_PATTERN = re.compile(r"(?<![\d:])\d{1,2}:\d{2}(?![\d:])")
 UKRAINIAN_PHONE_PATTERN = re.compile(
     r"(?<!\d)(?:\+?38[\s().-]*)?0\d{2}(?:[\s().-]*\d){7}(?!\d)"
 )
 INTERNATIONAL_PHONE_PATTERN = re.compile(r"(?<![\w\d])\+(?:\d[\s().-]*){7,14}\d(?!\d)")
+PHONE_CONTEXT_PATTERN = re.compile(
+    r"(?ix)(?<!\w)(?:тел(?:ефон)?|tel(?:ephone)?)(?!\w)"
+    r"\.?\s*:?\s*\(?\d{2}\)?(?:[\s.-]*\d){7}(?!\d)"
+)
 DATE_PATTERN = re.compile(
-    r"(?<!\d)(?P<day>\d{1,2})[./-](?P<month>\d{1,2})"
-    r"(?:[./-](?P<year>\d{4}))?(?!\d)"
+    r"(?<![\d./-])(?P<day>\d{1,2})(?P<separator>[./-])"
+    r"(?P<month>\d{1,2})(?:(?P=separator)(?P<year>\d{4}))?"
+    r"(?![\d./-])"
 )
 RELATIVE_DATE_PATTERN = re.compile(
     r"\b(?P<relative>сьогодні|вчора|today|yesterday)\b",
     re.IGNORECASE,
 )
-ADDRESS_PATTERN = re.compile(
-    r"(?ix)\b(?:вул(?:иця)?|буд(?:инок)?|кв(?:артира)?|"
-    r"під['’]?їзд|street|house|apartment)\.?\s*"
-    r"(?:[^\W\d_.'’]+[.'’]?\s*,?\s*){0,4}"
-    r"(?P<number>\d+[A-Za-zА-Яа-яІіЇїЄєҐґ]?(?:[/-]\d+)?)"
+ADDRESS_NUMBER_TOKEN = r"\d+[A-Za-zА-Яа-яІіЇїЄєҐґ]?(?:[/-]\d+)?"
+UNIT_ADDRESS_PATTERN = re.compile(
+    rf"(?ix)(?<!\w)(?:буд(?:инок)?|кв(?:артира)?|"
+    rf"під['’]?їзд|house|apartment)(?!\w)"
+    rf"\.?\s*(?:№|\#)?\s*(?P<number>{ADDRESS_NUMBER_TOKEN})"
 )
+STREET_ADDRESS_PATTERN = re.compile(
+    rf"(?ix)(?<!\w)(?:вул(?:иця)?|street)(?!\w)\.?\s*"
+    rf"(?:(?:№|\#)\s*)?"
+    rf"(?:[^\W\d_]+(?:[-'’][^\W\d_]+)*\s*,?\s*)?"
+    rf"(?P<number>{ADDRESS_NUMBER_TOKEN})"
+)
+IPV4_LIKE_PATTERN = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+ISO_DATE_LIKE_PATTERN = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+UNREASONABLE_NUMBER_PATTERN = re.compile(
+    r"(?<!\d)(?:\d{19,}|\d{1,3}(?:[ \t\u00a0]+\d{3}){6,})(?!\d)"
+)
+MAX_DESCRIPTION_LENGTH = 1000
+
+
+@dataclass(frozen=True)
+class _ProtectedContext:
+    spans: tuple[tuple[int, int], ...]
+    starts: tuple[int, ...]
+    absolute_dates: tuple[date, ...]
+    relative_dates: tuple[str, ...]
+    temporal_spans: tuple[tuple[int, int], ...]
 
 
 def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -77,45 +125,103 @@ def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def find_protected_spans(text: str) -> list[tuple[int, int]]:
-    """Return merged source offsets that cannot be interpreted as money."""
-    patterns = (
-        TIME_PATTERN,
+def _overlaps(
+    candidate: tuple[int, int],
+    spans: tuple[tuple[int, int], ...],
+    starts: tuple[int, ...],
+) -> bool:
+    """Check overlap against sorted disjoint spans in logarithmic time."""
+    start, end = candidate
+    index = bisect_left(starts, end)
+    return index > 0 and spans[index - 1][1] > start
+
+
+def _protected_context(text: str, current_date: date) -> _ProtectedContext:
+    base_patterns = (
+        TIME_LIKE_PATTERN,
         UKRAINIAN_PHONE_PATTERN,
         INTERNATIONAL_PHONE_PATTERN,
-        DATE_PATTERN,
-        RELATIVE_DATE_PATTERN,
-        ADDRESS_PATTERN,
+        PHONE_CONTEXT_PATTERN,
+        UNIT_ADDRESS_PATTERN,
+        STREET_ADDRESS_PATTERN,
+        IPV4_LIKE_PATTERN,
+        ISO_DATE_LIKE_PATTERN,
+        UNREASONABLE_NUMBER_PATTERN,
     )
-    spans = [match.span() for pattern in patterns for match in pattern.finditer(text)]
-    return _merge_spans(spans)
+    base_spans = _merge_spans(
+        [match.span() for pattern in base_patterns for match in pattern.finditer(text)]
+    )
+    base_spans_tuple = tuple(base_spans)
+    base_starts = tuple(start for start, _ in base_spans)
 
+    date_spans: list[tuple[int, int]] = []
+    absolute_dates: list[date] = []
+    for match in DATE_PATTERN.finditer(text):
+        if _overlaps(match.span(), base_spans_tuple, base_starts):
+            continue
+        date_spans.append(match.span())
+        try:
+            absolute_dates.append(
+                date(
+                    int(match.group("year") or current_date.year),
+                    int(match.group("month")),
+                    int(match.group("day")),
+                )
+            )
+        except ValueError:
+            continue
 
-def _overlaps(
-    candidate: tuple[int, int], protected_spans: list[tuple[int, int]]
-) -> bool:
-    start, end = candidate
-    return any(
-        start < protected_end and protected_start < end
-        for protected_start, protected_end in protected_spans
+    relative_spans: list[tuple[int, int]] = []
+    relative_dates: list[str] = []
+    for match in RELATIVE_DATE_PATTERN.finditer(text):
+        if _overlaps(match.span(), base_spans_tuple, base_starts):
+            continue
+        relative_spans.append(match.span())
+        relative_dates.append(match.group("relative").casefold())
+
+    protected = tuple(_merge_spans([*base_spans, *date_spans, *relative_spans]))
+    return _ProtectedContext(
+        spans=protected,
+        starts=tuple(start for start, _ in protected),
+        absolute_dates=tuple(absolute_dates),
+        relative_dates=tuple(relative_dates),
+        temporal_spans=tuple(
+            _merge_spans(
+                [
+                    *(match.span() for match in TIME_LIKE_PATTERN.finditer(text)),
+                    *date_spans,
+                    *relative_spans,
+                ]
+            )
+        ),
     )
 
 
-def _decimal_from_text(value: str) -> Decimal:
-    compact = value.replace(" ", "").replace("\u00a0", "").replace(",", ".")
+def find_protected_spans(text: str) -> list[tuple[int, int]]:
+    """Return merged source offsets that cannot be interpreted as money."""
+    current_date = datetime.now(UTC).date()
+    return list(_protected_context(text, current_date).spans)
+
+
+def _decimal_from_text(value: str) -> Decimal | None:
+    compact = re.sub(r"[ \t\u00a0]+", "", value).replace(",", ".")
+    integer = compact.partition(".")[0]
+    if len(integer) > 18:
+        return None
     try:
         amount = Decimal(compact)
-    except InvalidOperation as error:
-        raise ValueError(f"Invalid amount: {value}") from error
+        quantized = amount.quantize(Decimal("0.01"))
+    except InvalidOperation:
+        return None
     if amount <= 0:
-        raise ValueError("Amount must be positive")
-    return amount.quantize(Decimal("0.01"))
+        return None
+    return quantized
 
 
 def _fuzzy_nearby_currency(text: str, span: tuple[int, int]) -> str | None:
     start, end = span
-    before = re.search(r"([^\W\d_]{3,12})\s*$", text[:start], re.UNICODE)
-    after = re.match(r"\s*([^\W\d_]{3,12})", text[end:], re.UNICODE)
+    before = re.search(r"([^\W\d_]+)\s*$", text[:start], re.UNICODE)
+    after = re.match(r"\s*([^\W\d_]+)", text[end:], re.UNICODE)
     for nearby in (after, before):
         if nearby is None:
             continue
@@ -144,21 +250,10 @@ def _detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
     ]
 
 
-def _income_date(text: str, current_date: date) -> date:
-    absolute = DATE_PATTERN.search(text)
-    if absolute:
-        year = int(absolute.group("year") or current_date.year)
-        try:
-            return date(
-                year,
-                int(absolute.group("month")),
-                int(absolute.group("day")),
-            )
-        except ValueError as error:
-            raise ValueError(f"Invalid income date: {absolute.group(0)}") from error
-
-    relative = RELATIVE_DATE_PATTERN.search(text)
-    if relative and relative.group("relative").casefold() in {"вчора", "yesterday"}:
+def _income_date(context: _ProtectedContext, current_date: date) -> date:
+    if context.absolute_dates:
+        return context.absolute_dates[0]
+    if context.relative_dates and context.relative_dates[0] in {"вчора", "yesterday"}:
         return current_date - timedelta(days=1)
     return current_date
 
@@ -177,32 +272,32 @@ def parse_income_message(
     today: date | None = None,
 ) -> list[ParsedIncome]:
     """Parse every unprotected amount in a message as income."""
-    protected_spans = find_protected_spans(text)
-    matches = [
-        match
-        for match in MONEY_PATTERN.finditer(text)
-        if not _overlaps(match.span(), protected_spans)
-    ]
-    if not matches:
+    current_date = today or datetime.now(UTC).date()
+    context = _protected_context(text, current_date)
+    candidates: list[tuple[re.Match[str], Decimal]] = []
+    for match in MONEY_PATTERN.finditer(text):
+        if _overlaps(match.span(), context.spans, context.starts):
+            continue
+        amount = _decimal_from_text(match.group("amount"))
+        if amount is not None:
+            candidates.append((match, amount))
+    if not candidates:
         return []
 
-    current_date = today or datetime.now(UTC).date()
     categories = _detect_labels(text, config.categories) or ["other"]
     tags = _detect_labels(text, config.tags)
-    removed_spans = [match.span() for match in matches]
-    removed_spans.extend(match.span() for match in DATE_PATTERN.finditer(text))
-    removed_spans.extend(match.span() for match in RELATIVE_DATE_PATTERN.finditer(text))
-    removed_spans.extend(match.span() for match in TIME_PATTERN.finditer(text))
+    removed_spans = [match.span() for match, _ in candidates]
+    removed_spans.extend(context.temporal_spans)
     description = re.sub(
         r"\s+",
         " ",
         _without_spans(text, _merge_spans(removed_spans)),
-    ).strip(" ,;:-")
-    income_date = _income_date(text, current_date)
+    ).strip(" ,;:-")[:MAX_DESCRIPTION_LENGTH]
+    income_date = _income_date(context, current_date)
 
     return [
         ParsedIncome(
-            amount=_decimal_from_text(match.group("amount")),
+            amount=amount,
             currency=_currency_for_match(
                 text,
                 match,
@@ -213,5 +308,5 @@ def parse_income_message(
             description=description,
             income_date=income_date,
         )
-        for match in matches
+        for match, amount in candidates
     ]
