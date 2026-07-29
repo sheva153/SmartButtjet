@@ -39,12 +39,19 @@ def income_config() -> IncomeConfig:
         "телефон 67 123 45 67",
         "тел. 67-123-45-67",
         "tel 67 123 45 67",
+        "моб. 67 123 45 67",
+        "мобільний 67-123-45-67",
+        "phone 67 123 45 67",
+        "mobile 67-123-45-67",
         "call me at +1 (202) 555-0123",
         "вул. Шевченка, будинок 12, квартира 35",
         "будинок №12",
         "apartment #35",
         "вул. Шевченка, 12",
+        "вул. Івана Франка 12",
+        "вулиця Героїв Небесної Сотні 12",
         "street Baker 221B",
+        "street Martin Luther King 12",
         "street Baker, house 221B, apartment 5",
         "подія 10.07.2026",
     ],
@@ -59,6 +66,14 @@ def test_protected_spans_keep_original_positions() -> None:
     spans = find_protected_spans(text)
 
     assert [text[start:end] for start, end in spans] == ["+380 67 123 45 67"]
+
+
+def test_only_valid_clock_time_is_a_protected_span() -> None:
+    valid = "зустріч о 15:30"
+    invalid = ["значення 25:00", "значення 15:30:20"]
+
+    assert [valid[start:end] for start, end in find_protected_spans(valid)] == ["15:30"]
+    assert all(find_protected_spans(text) == [] for text in invalid)
 
 
 def test_money_next_to_phone_is_kept(income_config: IncomeConfig) -> None:
@@ -101,6 +116,8 @@ def test_address_fraction_is_not_used_as_an_income_date(
     "text",
     [
         "на вул. Шевченка отримав 500",
+        "вул. отримав 500",
+        "street earned 500",
         "продав квартиру отримав 500 грн",
         "будинок продав за 500",
         "apartment sold for 500 USD",
@@ -125,6 +142,9 @@ def test_address_words_do_not_swallow_later_money(
         ("Payment 300 EUR", Decimal("300.00"), "EUR"),
         ("Продаж 2 300", Decimal("2300.00"), "UAH"),
         ("Заробив 99,50 гривень", Decimal("99.50"), "UAH"),
+        ("500\u00a0грн", Decimal("500.00"), "UAH"),
+        ("500\nUSD", Decimal("500.00"), "USD"),
+        ("₴\n500", Decimal("500.00"), "UAH"),
     ],
 )
 def test_permissive_amount_and_currency_parsing(
@@ -159,6 +179,19 @@ def test_nearby_currency_typos_remain_supported(
     assert parsed[0].currency == currency
 
 
+@pytest.mark.parametrize(
+    "word",
+    ["долина", "долати", "європа", "europe", "рівень"],
+)
+def test_unlisted_nearby_words_keep_default_currency(
+    word: str,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(f"100 {word}", income_config)
+
+    assert parsed[0].currency == "UAH"
+
+
 @pytest.mark.parametrize("text", ["100 usda", "100 eurocentric"])
 def test_currency_aliases_do_not_match_word_prefixes(
     text: str,
@@ -185,8 +218,6 @@ def test_standalone_hour_remains_an_amount_candidate(
         "192.168.1.1",
         "2026-07-29",
         "25:00",
-        "123456789012345678901234567890",
-        "1 234 567 890 123 456 789",
     ],
 )
 def test_structured_or_unreasonable_tokens_are_not_partially_parsed(
@@ -200,6 +231,29 @@ def test_structured_or_unreasonable_tokens_are_not_partially_parsed(
     )
 
     assert [item.amount for item in parsed] == [Decimal("500.00")]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "123456789012345678901234567890.12",
+            Decimal("123456789012345678901234567890.12"),
+        ),
+        (
+            "1 234 567 890 123 456 789 012 345 678",
+            Decimal("1234567890123456789012345678.00"),
+        ),
+    ],
+)
+def test_large_decimal_precision_is_supported(
+    text: str,
+    expected: Decimal,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(text, income_config)
+
+    assert [item.amount for item in parsed] == [expected]
 
 
 def test_invalid_candidate_does_not_abort_later_valid_money(
@@ -279,17 +333,41 @@ def test_income_date_is_extracted_without_becoming_an_amount(
     assert parsed[0].income_date == expected
 
 
-def test_invalid_absolute_date_does_not_abort_valid_money(
+@pytest.mark.parametrize(
+    ("text", "currency"),
+    [
+        ("99.99 грн", "UAH"),
+        ("$99.99", "USD"),
+        ("50.25 USD", "USD"),
+        ("32.13 грн", "UAH"),
+    ],
+)
+def test_explicit_currency_dot_decimal_wins_over_date_syntax(
+    text: str,
+    currency: str,
     income_config: IncomeConfig,
 ) -> None:
-    parsed = parse_income_message(
-        "Отримав 500 грн 32.13",
-        income_config,
-        today=date(2026, 7, 24),
-    )
+    parsed = parse_income_message(text, income_config)
 
-    assert [item.amount for item in parsed] == [Decimal("500.00")]
-    assert parsed[0].income_date == date(2026, 7, 24)
+    assert [item.amount for item in parsed] == [
+        Decimal(text.replace("$", "").split()[0]).quantize(Decimal("0.01"))
+    ]
+    assert parsed[0].currency == currency
+
+
+def test_bare_valid_date_remains_protected(income_config: IncomeConfig) -> None:
+    assert parse_income_message("подія 10.07", income_config) == []
+
+
+def test_invalid_bare_date_preserves_validation_error(
+    income_config: IncomeConfig,
+) -> None:
+    with pytest.raises(ValueError, match="Invalid income date: 32.13"):
+        parse_income_message(
+            "Отримав 500 грн 32.13",
+            income_config,
+            today=date(2026, 7, 24),
+        )
 
 
 def test_description_is_truncated_to_record_limit(
