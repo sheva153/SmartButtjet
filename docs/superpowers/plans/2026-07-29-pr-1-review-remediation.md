@@ -253,19 +253,17 @@ permission, analytics, fun-summary, and secrets models. Define taxonomy maps:
 ```python
 class IncomeConfig(BaseModel):
     default_currency: str = "UAH"
-    categories: dict[str, list[str]] = Field(
-        default_factory=lambda: {"other": []}
-    )
+    categories: dict[str, list[str]] = Field(default_factory=lambda: {"other": []})
     tags: dict[str, list[str]] = Field(default_factory=dict)
     allow_custom_categories: bool = True
 
     @field_validator("categories", "tags")
     @classmethod
-    def normalize_taxonomy(
-        cls, values: dict[str, list[str]]
-    ) -> dict[str, list[str]]:
+    def normalize_taxonomy(cls, values: dict[str, list[str]]) -> dict[str, list[str]]:
         return {
-            normalize_label(name): list(dict.fromkeys(alias.casefold() for alias in aliases))
+            normalize_label(name): list(
+                dict.fromkeys(alias.casefold() for alias in aliases)
+            )
             for name, aliases in values.items()
         }
 ```
@@ -331,9 +329,7 @@ def income_config() -> IncomeConfig:
         "вул. Шевченка, будинок 12, квартира 35",
     ],
 )
-def test_non_money_patterns_are_ignored(
-    text: str, income_config: IncomeConfig
-) -> None:
+def test_non_money_patterns_are_ignored(text: str, income_config: IncomeConfig) -> None:
     assert parse_income_message(text, income_config) == []
 
 
@@ -347,9 +343,7 @@ def test_money_next_to_phone_is_kept(income_config: IncomeConfig) -> None:
 def test_multiple_categories_and_tags_are_detected(
     income_config: IncomeConfig,
 ) -> None:
-    parsed = parse_income_message(
-        "зп 20 000 на картку, повернули борг", income_config
-    )
+    parsed = parse_income_message("зп 20 000 на картку, повернули борг", income_config)
     assert parsed[0].categories == ["salary", "debt"]
     assert parsed[0].tags == ["card"]
 ```
@@ -399,10 +393,7 @@ def detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
     return [
         label
         for label, terms in aliases.items()
-        if any(
-            re.search(rf"(?<!\w){re.escape(term)}(?!\w)", lowered)
-            for term in terms
-        )
+        if any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", lowered) for term in terms)
     ]
 ```
 
@@ -512,8 +503,7 @@ def _encode_cell(value: object) -> str:
 
 def _to_row(model: BaseModel) -> dict[str, str]:
     return {
-        key: _encode_cell(value)
-        for key, value in model.model_dump(mode="json").items()
+        key: _encode_cell(value) for key, value in model.model_dump(mode="json").items()
     }
 ```
 
@@ -614,9 +604,7 @@ Expected: FAIL because the services do not exist.
 
 ```python
 class IncomeService:
-    def __init__(
-        self, repository: RecordsRepository, config: IncomeConfig
-    ) -> None:
+    def __init__(self, repository: RecordsRepository, config: IncomeConfig) -> None:
         self._repository = repository
         self._config = config
 
@@ -744,9 +732,7 @@ async def test_category_breakdown_expands_multiple_categories(
     assert analytics_service.total(frame) == 500
 
 
-async def test_chart_builds_png_and_html(
-    analytics_service, monkeypatch
-) -> None:
+async def test_chart_builds_png_and_html(analytics_service, monkeypatch) -> None:
     monkeypatch.setattr(
         "plotly.graph_objects.Figure.write_image",
         lambda self, path: Path(path).write_bytes(b"png"),
@@ -912,8 +898,7 @@ Handlers accept services by parameter name:
 @router.message(F.text)
 async def income_message_handler(
     message: Message, income_service: IncomeService
-) -> None:
-    ...
+) -> None: ...
 ```
 
 Create records sequentially through `IncomeService`, then schedule independent
@@ -921,8 +906,10 @@ Telegram replies with:
 
 ```python
 results = await asyncio.gather(
-    *(message.reply(format_success(record), reply_markup=success_keyboard(record))
-      for record in records),
+    *(
+        message.reply(format_success(record), reply_markup=success_keyboard(record))
+        for record in records
+    ),
     return_exceptions=True,
 )
 ```

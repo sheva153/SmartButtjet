@@ -21,4 +21,3 @@ __all__ = [
     "RecordNote",
     "normalize_label",
 ]
-

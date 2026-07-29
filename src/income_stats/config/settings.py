@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from income_stats.models.domain import FunSummaryConfig, Period, normalize_label
@@ -25,32 +25,54 @@ class StorageConfig(BaseModel):
 class TaxonomyConfig(BaseModel):
     """Configured canonical category/tag labels and their message aliases."""
 
-    categories: dict[str, list[str]] = Field(
-        default_factory=lambda: {"other": []}
-    )
+    categories: dict[str, list[str]] = Field(default_factory=lambda: {"other": []})
     tags: dict[str, list[str]] = Field(default_factory=dict)
 
-    @field_validator("categories", "tags")
+    @field_validator("categories", "tags", mode="before")
     @classmethod
     def normalize_taxonomy(
-        cls, values: dict[str, list[str]]
+        cls, values: object, info: ValidationInfo
     ) -> dict[str, list[str]]:
-        return {
-            normalize_label(name): list(
-                dict.fromkeys(alias.strip().casefold() for alias in aliases)
-            )
-            for name, aliases in values.items()
-        }
+        if not isinstance(values, dict):
+            raise ValueError(f"{info.field_name} must be an alias map")
+        if info.field_name == "categories" and not values:
+            raise ValueError("At least one category is required")
+
+        normalized: dict[str, list[str]] = {}
+        for name, aliases in values.items():
+            if not isinstance(name, str):
+                raise ValueError("Taxonomy labels must be strings")
+            canonical = normalize_label(name)
+            if canonical in normalized:
+                raise ValueError(f"Taxonomy labels collide after normalization: {name}")
+            if not isinstance(aliases, list):
+                raise ValueError(f"Aliases for {name} must be a list")
+
+            normalized_aliases: list[str] = []
+            for alias in aliases:
+                if not isinstance(alias, str) or not alias.strip():
+                    raise ValueError(f"Aliases for {name} must not be blank")
+                normalized_aliases.append(alias.strip().casefold())
+            normalized[canonical] = list(dict.fromkeys(normalized_aliases))
+
+        if info.field_name == "categories" and "other" not in normalized:
+            raise ValueError("Categories must define an 'other' fallback")
+        return normalized
 
 
 class IncomeConfig(TaxonomyConfig):
     default_currency: str = "UAH"
     allow_custom_categories: bool = True
 
-    @field_validator("default_currency")
+    @field_validator("default_currency", mode="before")
     @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return value.strip().upper()
+    def normalize_currency(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Currency must be a three-letter code")
+        currency = value.strip().upper()
+        if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        return currency
 
 
 class PermissionsConfig(BaseModel):
@@ -100,4 +122,3 @@ def load_config(path: Path = Path("config.yaml")) -> AppConfig:
     with path.open(encoding="utf-8") as stream:
         raw = yaml.safe_load(stream) or {}
     return AppConfig.model_validate(raw)
-

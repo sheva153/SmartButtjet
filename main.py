@@ -57,7 +57,9 @@ class StorageConfig(BaseModel):
 
 class IncomeConfig(BaseModel):
     default_currency: str = "UAH"
-    categories: list[str] = Field(default_factory=lambda: ["other"])
+    categories: list[str] | dict[str, list[str]] = Field(
+        default_factory=lambda: ["other"]
+    )
     allow_custom_categories: bool = True
 
     @field_validator("default_currency")
@@ -67,11 +69,26 @@ class IncomeConfig(BaseModel):
 
     @field_validator("categories")
     @classmethod
-    def normalize_categories(cls, values: list[str]) -> list[str]:
-        normalized = [normalize_category(value) for value in values]
+    def normalize_categories(
+        cls, values: list[str] | dict[str, list[str]]
+    ) -> list[str] | dict[str, list[str]]:
+        category_names = values if isinstance(values, list) else list(values)
+        normalized = [normalize_category(value) for value in category_names]
         if not normalized:
             raise ValueError("At least one category is required")
-        return list(dict.fromkeys(normalized))
+        if isinstance(values, list):
+            return list(dict.fromkeys(normalized))
+        return {
+            name: values[original]
+            for original, name in zip(values, normalized, strict=True)
+        }
+
+    @property
+    def category_names(self) -> list[str]:
+        """Bridge legacy call sites while config taxonomy uses alias maps."""
+        if isinstance(self.categories, list):
+            return self.categories
+        return list(self.categories)
 
 
 class PermissionsConfig(BaseModel):
@@ -1110,7 +1127,7 @@ async def edit_value_handler(message: Message, state: FSMContext) -> None:
             value = normalize_category(raw)
             if (
                 not config.income.allow_custom_categories
-                and value not in config.income.categories
+                and value not in config.income.category_names
             ):
                 raise ValueError("Такої категорії немає.")
         elif field == "income_date":
@@ -1434,7 +1451,7 @@ async def income_message_handler(message: Message, state: FSMContext) -> None:
     parsed_items = parse_income_message(
         message.text,
         default_currency=config.income.default_currency,
-        categories=config.income.categories,
+        categories=config.income.category_names,
         today=datetime.now(ZoneInfo(config.bot.timezone)).date(),
     )
     parsed_with_amount = [item for item in parsed_items if item.amount is not None]
@@ -1626,7 +1643,7 @@ def cli() -> None:
         results = parse_income_message(
             args.message,
             default_currency=config.income.default_currency,
-            categories=config.income.categories,
+            categories=config.income.category_names,
         )
         for result in results:
             print(result.model_dump_json(indent=2))

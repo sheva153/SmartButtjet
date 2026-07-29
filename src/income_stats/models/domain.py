@@ -25,20 +25,29 @@ def _normalize_labels(values: list[str], *, fallback: str | None) -> list[str]:
     return labels
 
 
+def _normalize_currency(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Currency must be a three-letter code")
+    currency = value.strip().upper()
+    if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+        raise ValueError("Currency must be a three-letter code")
+    return currency
+
+
 class ParsedIncome(BaseModel):
     """An income candidate extracted from one incoming message."""
 
-    amount: Decimal | None
-    currency: str = "UAH"
+    amount: Decimal | None = Field(gt=0)
+    currency: str = Field(default="UAH", min_length=3, max_length=3)
     categories: list[str] = Field(default_factory=lambda: ["other"])
     tags: list[str] = Field(default_factory=list)
     description: str = ""
     income_date: date
 
-    @field_validator("currency")
+    @field_validator("currency", mode="before")
     @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return value.strip().upper()
+    def normalize_currency(cls, value: object) -> str:
+        return _normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -72,10 +81,10 @@ class IncomeRecord(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_by: int
 
-    @field_validator("currency")
+    @field_validator("currency", mode="before")
     @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return value.strip().upper()
+    def normalize_currency(cls, value: object) -> str:
+        return _normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -135,4 +144,3 @@ class FunSummaryConfig(BaseModel):
     number_phrases: dict[str, str] = Field(default_factory=dict)
     ending_phrases: dict[str, str] = Field(default_factory=dict)
     items: dict[str, FunItem] = Field(default_factory=dict)
-
