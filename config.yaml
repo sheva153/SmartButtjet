@@ -12,13 +12,17 @@ storage:
 income:
   default_currency: UAH
   categories:
-    - salary
-    - freelance
-    - sales
-    - consulting
-    - investment
-    - gift
-    - other
+    salary: [зарплата, зп, аванс, salary]
+    debt: [борг, повернули борг, повернення боргу, debt]
+    sales: [продаж, продав, продала, sales]
+    freelance: [фриланс, фріланс, freelance]
+    consulting: [консультація, консалтинг, consulting]
+    investment: [інвестиція, інвестиції, дивіденди, investment]
+    gift: [подарунок, подарували, gift]
+    other: []
+  tags:
+    card: [картка, карта, на карту, на картку, card]
+    cash: [готівка, готівкою, кеш, cash]
   allow_custom_categories: true
 
 permissions:
