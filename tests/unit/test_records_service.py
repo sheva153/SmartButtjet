@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from income_stats.models import ChatSetting, IncomeRecord, RecordNote
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services.records_service import (
+    EditLockError,
     EditLocks,
     RecordField,
     RecordsService,
@@ -81,6 +82,8 @@ class FakeRecordsRepository:
         return note
 
     async def list_notes(self, record_id: str) -> list[RecordNote]:
+        if record_id not in self.records:
+            raise RecordNotFoundError(record_id)
         return [note for note in self.notes if note.record_id == record_id]
 
     async def is_chat_enabled(self, chat_id: int) -> bool:
@@ -134,6 +137,43 @@ async def test_invalid_edit_keeps_lock(
     assert not records_service.acquire_edit(record.id, user_id=8)
 
 
+async def test_non_owner_cannot_update_locked_record(
+    records_service: RecordsService,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    with pytest.raises(EditLockError):
+        await records_service.update_field(
+            record.id,
+            "amount",
+            "999",
+            user_id=8,
+        )
+
+    unchanged = await records_service.get(record.id)
+    assert unchanged is not None
+    assert unchanged.amount == Decimal("500")
+
+
+async def test_expired_owner_cannot_update_after_reacquisition(
+    record: IncomeRecord,
+) -> None:
+    current = datetime(2026, 7, 29, 10, tzinfo=UTC)
+    locks = EditLocks(clock=lambda: current)
+    service = RecordsService(
+        FakeRecordsRepository([record]),
+        edit_lock_seconds=60,
+        edit_locks=locks,
+    )
+    assert service.acquire_edit(record.id, user_id=7)
+    current += timedelta(seconds=61)
+    assert service.acquire_edit(record.id, user_id=8)
+
+    with pytest.raises(EditLockError):
+        await service.update_field(record.id, "amount", "999", user_id=7)
+
+
 @pytest.mark.parametrize(
     ("field", "raw", "expected"),
     [
@@ -183,6 +223,22 @@ async def test_missing_update_releases_lock(
         )
 
     assert records_service.acquire_edit(record.id, user_id=8)
+
+
+async def test_large_amount_edit_round_trips(
+    records_service: RecordsService,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    updated = await records_service.update_field(
+        record.id,
+        "amount",
+        "123456789012345678901234567890.12",
+        user_id=7,
+    )
+
+    assert updated.amount == Decimal("123456789012345678901234567890.12")
 
 
 async def test_invalid_model_value_keeps_lock(
@@ -255,6 +311,43 @@ async def test_page_is_latest_first_and_clamped() -> None:
     assert first.total_pages == 3
     assert [record.id for record in last.records] == ["record-0"]
     assert last.page == 2
+
+
+async def test_page_sorts_mixed_naive_and_aware_timestamps() -> None:
+    same_day = date(2026, 7, 29)
+    records = [
+        make_record(
+            1,
+            income_date=same_day,
+            created_at=datetime(2026, 7, 29, 9),
+        ),
+        make_record(
+            2,
+            income_date=same_day,
+            created_at=datetime(2026, 7, 29, 10, tzinfo=UTC),
+        ),
+    ]
+
+    page = await RecordsService(FakeRecordsRepository(records)).page(-100)
+
+    assert [item.id for item in page.records] == ["record-2", "record-1"]
+
+
+@pytest.mark.parametrize("raw", ["29.07/2026", "29/07-2026", "29-07.2026"])
+async def test_date_edit_rejects_mixed_separators(
+    records_service: RecordsService,
+    record: IncomeRecord,
+    raw: str,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    with pytest.raises(ValueError, match="Date must use"):
+        await records_service.update_field(
+            record.id,
+            "income_date",
+            raw,
+            user_id=7,
+        )
 
 
 def test_lock_cancel_navigation_and_expiry_release() -> None:

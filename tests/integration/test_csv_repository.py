@@ -214,6 +214,13 @@ def test_note_for_missing_record_raises_domain_error(
         )
 
 
+def test_list_notes_for_missing_record_raises_domain_error(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    with pytest.raises(RecordNotFoundError, match="missing"):
+        csv_repository.list_notes_sync("missing")
+
+
 def test_chat_setting_is_persisted(
     csv_repository: CsvRecordsRepository,
 ) -> None:

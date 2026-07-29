@@ -336,6 +336,9 @@ class CsvRecordsRepository:
 
     def list_notes_sync(self, record_id: str) -> list[RecordNote]:
         with self._sync_lock:
+            records = self._read_records_unlocked()
+            if not (records["id"] == record_id).any():
+                raise RecordNotFoundError(record_id)
             frame = self._read(self.notes_path, NOTE_COLUMNS)
             rows = frame[frame["record_id"] == record_id]
             return [

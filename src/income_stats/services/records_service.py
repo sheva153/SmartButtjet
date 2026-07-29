@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from re import Pattern
 from re import compile as compile_pattern
 from typing import Literal
@@ -31,8 +31,8 @@ _EDITABLE_FIELDS: frozenset[str] = frozenset(
     }
 )
 _DATE_INPUT_PATTERN: Pattern[str] = compile_pattern(
-    r"(?P<day>\d{1,2})[./-](?P<month>\d{1,2})"
-    r"(?:[./-](?P<year>\d{4}))?"
+    r"(?P<day>\d{1,2})(?P<separator>[./-])(?P<month>\d{1,2})"
+    r"(?:(?P=separator)(?P<year>\d{4}))?"
 )
 _DECIMAL_PLACES = Decimal("0.01")
 
@@ -42,6 +42,14 @@ class RecordPage:
     records: list[IncomeRecord]
     page: int
     total_pages: int
+
+
+class EditLockError(RuntimeError):
+    """Raised when a caller no longer owns a record's active edit lock."""
+
+    def __init__(self, record_id: str) -> None:
+        self.record_id = record_id
+        super().__init__(f"Record is locked by another user: {record_id}")
 
 
 class EditLocks:
@@ -121,7 +129,10 @@ class RecordsService:
         records = await self._repository.list_records(chat_id)
         return sorted(
             records,
-            key=lambda record: (record.income_date, record.created_at),
+            key=lambda record: (
+                record.income_date,
+                _utc_timestamp(record.created_at),
+            ),
             reverse=True,
         )
 
@@ -140,8 +151,6 @@ class RecordsService:
         )
 
     async def list_notes(self, record_id: str) -> list[RecordNote]:
-        if await self._repository.get_record(record_id) is None:
-            raise RecordNotFoundError(record_id)
         return await self._repository.list_notes(record_id)
 
     def acquire_edit(self, record_id: str, user_id: int) -> bool:
@@ -171,6 +180,8 @@ class RecordsService:
     ) -> IncomeRecord:
         if field not in _EDITABLE_FIELDS:
             raise ValueError(f"Unsupported record field: {field}")
+        if not self._edit_locks.is_owned_by(record_id, user_id):
+            raise EditLockError(record_id)
         value = self._parse_field(field, raw_value, today=today)
         current = await self._repository.get_record(record_id)
         if current is None:
@@ -246,12 +257,23 @@ class RecordsService:
 def _parse_amount(raw: str) -> Decimal:
     compact = raw.replace(" ", "").replace("\u00a0", "").replace(",", ".")
     try:
-        amount = Decimal(compact)
-        if not amount.is_finite() or amount <= 0:
-            raise ValueError("Amount must be positive")
-        return amount.quantize(_DECIMAL_PLACES)
+        with localcontext() as context:
+            context.prec = max(
+                28,
+                sum(character.isdigit() for character in compact) + 2,
+            )
+            amount = Decimal(compact)
+            if not amount.is_finite() or amount <= 0:
+                raise ValueError("Amount must be positive")
+            return amount.quantize(_DECIMAL_PLACES)
     except InvalidOperation as error:
         raise ValueError(f"Invalid amount: {raw}") from error
+
+
+def _utc_timestamp(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).timestamp()
 
 
 def _parse_date(raw: str, *, today: date | None) -> date:
