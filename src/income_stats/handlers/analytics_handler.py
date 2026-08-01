@@ -8,6 +8,8 @@ from aiogram.types import FSInputFile, Message
 from loguru import logger
 
 from income_stats.bot.ui import MENU_ANALYTICS, MENU_CHART
+from income_stats.config import AppConfig
+from income_stats.handlers.admin_handler import is_telegram_admin
 from income_stats.services import AnalyticsService
 from income_stats.utils import temporary_artifacts
 
@@ -47,7 +49,15 @@ async def chart_handler(message: Message, analytics_service: AnalyticsService) -
 
 
 @analytics_router.message(Command("export"))
-async def export_handler(message: Message, analytics_service: AnalyticsService) -> None:
+async def export_handler(
+    message: Message,
+    analytics_service: AnalyticsService,
+    app_config: AppConfig,
+) -> None:
+    user = message.from_user
+    if user is None or not await is_telegram_admin(message, user.id, app_config):
+        await message.answer("Ця команда лише для адміністраторів.")
+        return
     archive = await analytics_service.build_export(message.chat.id)
     with temporary_artifacts(archive):
         await message.answer_document(FSInputFile(archive))

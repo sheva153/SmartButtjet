@@ -1,5 +1,7 @@
 """Telegram application composition and polling lifecycle."""
 
+from copy import deepcopy
+
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from loguru import logger
@@ -48,8 +50,7 @@ def build_dispatcher(config: AppConfig) -> Dispatcher:
         admin_service=AdminService(repository),
         app_config=config,
     )
-    for router in routers:
-        dispatcher.include_router(router)
+    dispatcher.include_routers(*deepcopy(routers))
     return dispatcher
 
 
