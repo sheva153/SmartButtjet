@@ -1,12 +1,5 @@
-"""Telegram application and presentation exports."""
+"""Telegram application and presentation package.
 
-from income_stats.bot.application import build_dispatcher, run_bot
-from income_stats.bot.ui import EditState, RecordAction, main_menu
-
-__all__ = [
-    "EditState",
-    "RecordAction",
-    "build_dispatcher",
-    "main_menu",
-    "run_bot",
-]
+Import concrete modules directly so handler imports do not trigger application
+composition while the router package is still being initialized.
+"""

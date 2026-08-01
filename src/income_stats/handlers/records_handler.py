@@ -24,11 +24,42 @@ from income_stats.bot.ui import (
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
 from income_stats.handlers.analytics_handler import send_chart
+from income_stats.models import IncomeRecord
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services import AnalyticsService, RecordField, RecordsService
 from income_stats.services.records_service import EditLockError
 
 records_router = Router(name="records")
+
+
+async def _record_for_query(
+    query: CallbackQuery,
+    service: RecordsService,
+    record_id: str,
+) -> IncomeRecord | None:
+    if not isinstance(query.message, Message):
+        await query.answer("Повідомлення більше недоступне.", show_alert=True)
+        return None
+    record = await service.get_record(record_id)
+    if record is None or record.chat_id != query.message.chat.id:
+        await query.answer("Запис не знайдено.", show_alert=True)
+        return None
+    return record
+
+
+async def _can_delete(
+    message: Message,
+    user_id: int,
+    record: IncomeRecord,
+    config: AppConfig,
+) -> bool:
+    if config.permissions.author_can_delete and record.user_id == user_id:
+        return True
+    return config.permissions.admin_can_delete and await is_telegram_admin(
+        message,
+        user_id,
+        config,
+    )
 
 
 async def _clear_interaction(
@@ -87,6 +118,21 @@ async def cancel_handler(
     else:
         await state.clear()
     await message.answer("Дію скасовано.")
+
+
+@records_router.message(EditState.waiting_value, F.text.in_(MENU_LABELS))
+async def interaction_menu_handler(
+    message: Message,
+    state: FSMContext,
+    records_service: RecordsService,
+    analytics_service: AnalyticsService,
+) -> None:
+    await handle_menu_during_interaction(
+        message,
+        state,
+        records_service,
+        analytics_service,
+    )
 
 
 @records_router.message(F.text == MENU_RECORDS)
@@ -148,11 +194,10 @@ async def _start_edit(
     record_id: str,
     field: str,
 ) -> None:
-    user = query.from_user
-    record = await service.get_record(record_id)
+    record = await _record_for_query(query, service, record_id)
     if record is None:
-        await query.answer("Запис не знайдено.", show_alert=True)
         return
+    user = query.from_user
     if not service.acquire_edit(record_id, user.id):
         await query.answer("Цей запис зараз редагує інший учасник.", show_alert=True)
         return
@@ -189,9 +234,8 @@ async def note_callback(
 async def open_callback(
     query: CallbackQuery, callback_data: RecordAction, records_service: RecordsService
 ) -> None:
-    record = await records_service.get_record(callback_data.record_id)
+    record = await _record_for_query(query, records_service, callback_data.record_id)
     if record is None:
-        await query.answer("Запис не знайдено.", show_alert=True)
         return
     await query.answer()
     if isinstance(query.message, Message):
@@ -200,11 +244,75 @@ async def open_callback(
         )
 
 
+@records_router.callback_query(RecordAction.filter(F.action == "notes"))
+async def notes_callback(
+    query: CallbackQuery,
+    callback_data: RecordAction,
+    records_service: RecordsService,
+) -> None:
+    record = await _record_for_query(query, records_service, callback_data.record_id)
+    if record is None:
+        return
+    try:
+        notes = await records_service.list_notes(record.id)
+    except RecordNotFoundError:
+        await query.answer("Запис більше не існує.", show_alert=True)
+        return
+    if notes:
+        lines = [f"• {note.text} — @{note.username or note.user_id}" for note in notes]
+        text = f"📋 Нотатки до #{record.id[:8]}\n\n" + "\n".join(lines)
+    else:
+        text = f"📋 Нотатки до #{record.id[:8]}\n\nНотаток ще немає."
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="➕ Додати",
+        callback_data=RecordAction(action="note", record_id=record.id),
+    )
+    builder.button(
+        text="⬅️ До запису",
+        callback_data=RecordAction(action="open", record_id=record.id),
+    )
+    await query.answer()
+    if isinstance(query.message, Message):
+        await query.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@records_router.callback_query(RecordAction.filter(F.action == "records"))
+async def records_page_callback(
+    query: CallbackQuery,
+    callback_data: RecordAction,
+    records_service: RecordsService,
+) -> None:
+    if not isinstance(query.message, Message):
+        await query.answer("Повідомлення більше недоступне.", show_alert=True)
+        return
+    try:
+        page = int(callback_data.value or "0")
+    except ValueError:
+        page = 0
+    await query.answer()
+    await send_records_page(query.message, records_service, page)
+
+
 @records_router.callback_query(RecordAction.filter(F.action == "confirm_delete"))
 async def confirm_delete_callback(
-    query: CallbackQuery, callback_data: RecordAction, records_service: RecordsService
+    query: CallbackQuery,
+    callback_data: RecordAction,
+    records_service: RecordsService,
+    app_config: AppConfig,
 ) -> None:
-    deleted = await records_service.delete(callback_data.record_id)
+    record = await _record_for_query(query, records_service, callback_data.record_id)
+    if record is None or not isinstance(query.message, Message):
+        return
+    if not await _can_delete(
+        query.message,
+        query.from_user.id,
+        record,
+        app_config,
+    ):
+        await query.answer("Недостатньо прав.", show_alert=True)
+        return
+    deleted = await records_service.delete(record.id)
     await query.answer(
         "Запис видалено." if deleted else "Запис уже видалено.", show_alert=True
     )
@@ -217,18 +325,16 @@ async def delete_callback(
     records_service: RecordsService,
     app_config: AppConfig,
 ) -> None:
-    record = await records_service.get_record(callback_data.record_id)
+    record = await _record_for_query(query, records_service, callback_data.record_id)
     if record is None:
-        await query.answer("Запис не знайдено.", show_alert=True)
         return
     user = query.from_user
-    allowed = app_config.permissions.author_can_delete and record.user_id == user.id
-    if (
-        not allowed
-        and app_config.permissions.admin_can_delete
-        and isinstance(query.message, Message)
-    ):
-        allowed = await is_telegram_admin(query.message, user.id, app_config)
+    allowed = isinstance(query.message, Message) and await _can_delete(
+        query.message,
+        user.id,
+        record,
+        app_config,
+    )
     if not allowed:
         await query.answer("Недостатньо прав.", show_alert=True)
         return

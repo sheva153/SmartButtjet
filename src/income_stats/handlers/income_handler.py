@@ -12,6 +12,7 @@ from loguru import logger
 
 from income_stats.bot.ui import MENU_LABELS, format_success, success_keyboard
 from income_stats.config import AppConfig
+from income_stats.parsers import IncomeParseError
 from income_stats.services import AdminService, AnalyticsService, IncomeService
 
 income_router = Router(name="income")
@@ -44,14 +45,18 @@ async def income_message_handler(
         return
     if not await admin_service.status(message.chat.id):
         return
-    records = await income_service.capture(
-        text=text,
-        telegram_message_id=message.message_id,
-        chat_id=message.chat.id,
-        user_id=user.id,
-        username=user.username or "",
-        today=datetime.now(ZoneInfo(app_config.bot.timezone)).date(),
-    )
+    try:
+        records = await income_service.capture(
+            text=text,
+            telegram_message_id=message.message_id,
+            chat_id=message.chat.id,
+            user_id=user.id,
+            username=user.username or "",
+            today=datetime.now(ZoneInfo(app_config.bot.timezone)).date(),
+        )
+    except IncomeParseError:
+        await message.answer("Некоректна дата. Виправ повідомлення та надішли ще раз.")
+        return
     results = await asyncio.gather(
         *(
             message.reply(

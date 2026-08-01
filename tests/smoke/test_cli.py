@@ -39,7 +39,7 @@ def test_check_config_and_storage_do_not_need_token(tmp_path: Path) -> None:
     storage = _run_cli(config, "check-storage")
 
     assert configured.returncode == 0, configured.stderr
-    assert "Europe/Kyiv" in configured.stdout
+    assert configured.stdout.strip() == "Configuration is valid."
     assert storage.returncode == 0, storage.stderr
     assert "records=0" in storage.stdout
     assert "notes=0" in storage.stdout

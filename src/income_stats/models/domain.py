@@ -63,7 +63,7 @@ class ParsedIncome(BaseModel):
 class IncomeRecord(BaseModel):
     """A persisted income record."""
 
-    id: str = Field(default_factory=lambda: uuid4().hex)
+    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=32)
     telegram_message_id: int
     source_index: int = 0
     chat_id: int

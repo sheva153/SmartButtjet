@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from income_stats.bot import run_bot
+from income_stats.bot.application import run_bot
 from income_stats.config import AppConfig, load_config
 from income_stats.models import Period
 from income_stats.parsers import parse_income_message
@@ -60,8 +60,8 @@ def _analytics_service(config: AppConfig) -> AnalyticsService:
 
 
 def _check_config(config: AppConfig) -> None:
-    timezone = ZoneInfo(config.bot.timezone)
-    print(f"configuration=ok timezone={timezone.key}")
+    ZoneInfo(config.bot.timezone)
+    print("Configuration is valid.")
 
 
 def _check_storage(config: AppConfig) -> None:

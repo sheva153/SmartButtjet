@@ -8,6 +8,7 @@ import pytest
 from income_stats.config import AppConfig
 from income_stats.handlers.income_handler import income_message_handler, income_router
 from income_stats.models import IncomeRecord
+from income_stats.parsers import IncomeParseError
 
 
 def test_income_handler_is_importable() -> None:
@@ -36,6 +37,7 @@ async def test_income_handler_captures_and_replies_for_every_record() -> None:
         chat=SimpleNamespace(id=-100),
         message_id=10,
         reply=AsyncMock(),
+        answer=AsyncMock(),
     )
     income = SimpleNamespace(capture=AsyncMock(return_value=[record(), record()]))
     admin = SimpleNamespace(status=AsyncMock(return_value=True))
@@ -55,6 +57,7 @@ async def test_income_handler_never_captures_menu_or_commands() -> None:
             chat=SimpleNamespace(id=-100),
             message_id=10,
             reply=AsyncMock(),
+            answer=AsyncMock(),
         )
         await income_message_handler(
             message,
@@ -64,3 +67,29 @@ async def test_income_handler_never_captures_menu_or_commands() -> None:
             AppConfig(),
         )
     income.capture.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_income_handler_reports_invalid_date() -> None:
+    message = SimpleNamespace(
+        text="отримав 500 грн 32.13",
+        from_user=SimpleNamespace(id=7, username="felix", is_bot=False),
+        chat=SimpleNamespace(id=-100),
+        message_id=10,
+        reply=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    income = SimpleNamespace(
+        capture=AsyncMock(side_effect=IncomeParseError("invalid date"))
+    )
+
+    await income_message_handler(
+        message,
+        income,
+        SimpleNamespace(status=AsyncMock(return_value=True)),
+        SimpleNamespace(fun_summary=Mock()),
+        AppConfig(),
+    )
+
+    message.answer.assert_awaited_once()
+    message.reply.assert_not_awaited()

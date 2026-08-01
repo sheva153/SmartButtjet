@@ -113,6 +113,10 @@ ISO_DATE_LIKE_PATTERN = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 MAX_DESCRIPTION_LENGTH = 1000
 
 
+class IncomeParseError(ValueError):
+    """Raised when message text contains malformed income syntax."""
+
+
 @dataclass(frozen=True)
 class _ProtectedContext:
     spans: tuple[tuple[int, int], ...]
@@ -357,7 +361,7 @@ def parse_income_message(
     current_date = today or datetime.now(UTC).date()
     context = _protected_context(text, current_date, config)
     if context.invalid_dates:
-        raise ValueError(f"Invalid income date: {context.invalid_dates[0]}")
+        raise IncomeParseError(f"Invalid income date: {context.invalid_dates[0]}")
     candidates: list[tuple[re.Match[str], Decimal]] = []
     for match in MONEY_PATTERN.finditer(text):
         if _overlaps(match.span(), context.spans, context.starts):
