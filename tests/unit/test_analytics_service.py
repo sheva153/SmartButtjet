@@ -1,7 +1,9 @@
+import asyncio
 import zipfile
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
 from typing import cast
 
 import pytest
@@ -16,6 +18,7 @@ from income_stats.models import (
     RecordNote,
 )
 from income_stats.repositories import RecordsRepository
+from income_stats.services import analytics_service as analytics_module
 from income_stats.services.admin_service import AdminService
 from income_stats.services.analytics_service import AnalyticsService
 from income_stats.utils.files import temporary_artifacts
@@ -293,6 +296,60 @@ async def test_chart_rejects_amount_outside_exact_display_range(
 
     with pytest.raises(ValueError, match="exact display range"):
         await service.build_chart_artifacts(-100, "all")
+
+
+async def test_chart_accepts_adjacent_cents_inside_safe_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("first", "35184372088830.90", currency="UAH"),
+            make_record("second", "35184372088830.91", currency="USD"),
+        ]
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(static_preview=False, interactive_html=True),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    def fake_html(self: go.Figure, path: Path, **kwargs: object) -> None:
+        Path(path).write_text("plotly", encoding="utf-8")
+
+    monkeypatch.setattr("plotly.graph_objects.Figure.write_html", fake_html)
+
+    artifacts = await service.build_chart_artifacts(-100, "all")
+
+    assert artifacts.html is not None and artifacts.html.exists()
+
+
+async def test_cancelled_worker_cleans_returned_artifact(tmp_path: Path) -> None:
+    started = Event()
+    finish_signal = Event()
+    artifact = tmp_path / "late.html"
+
+    def write_late() -> Path:
+        started.set()
+        finish_signal.wait()
+        artifact.write_text("late", encoding="utf-8")
+        return artifact
+
+    task = asyncio.create_task(
+        analytics_module._run_blocking(
+            write_late,
+            cancelled_result_cleanup=lambda path: path.unlink(missing_ok=True),
+        )
+    )
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    task.cancel()
+    finish_signal.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not artifact.exists()
 
 
 async def test_empty_chart_is_rejected(

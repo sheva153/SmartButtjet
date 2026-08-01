@@ -24,7 +24,7 @@ from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
 from income_stats.repositories import RecordsRepository
 
-_MAX_EXACT_CHART_AMOUNT = Decimal(2**53 - 1) / 100
+_MAX_EXACT_CHART_AMOUNT = Decimal(2**45 - 1)
 
 
 @dataclass(frozen=True)
@@ -172,7 +172,8 @@ class AnalyticsService:
                 frame,
                 self.artifact_directory,
                 self._config,
-            )
+            ),
+            cancelled_result_cleanup=_remove_chart_artifacts,
         )
 
     async def build_export(self, chat_id: int) -> Path:
@@ -183,7 +184,8 @@ class AnalyticsService:
                 records,
                 notes,
                 self.artifact_directory,
-            )
+            ),
+            cancelled_result_cleanup=lambda path: path.unlink(missing_ok=True),
         )
 
     def fun_summary(
@@ -194,19 +196,43 @@ class AnalyticsService:
         return build_fun_summary(record, self._fun_summary, rng)
 
 
-async def _run_blocking[ResultT](operation: Callable[[], ResultT]) -> ResultT:
+async def _run_blocking[ResultT](
+    operation: Callable[[], ResultT],
+    *,
+    cancelled_result_cleanup: Callable[[ResultT], None] | None = None,
+) -> ResultT:
     """Run blocking chart/export work without relying on asyncio's broken executor."""
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="income-artifact")
     future = executor.submit(operation)
-    try:
+
+    async def poll_result() -> ResultT:
         while not future.done():
             await asyncio.sleep(0.01)
         return future.result()
+
+    polling = asyncio.create_task(poll_result())
+    try:
+        return await asyncio.shield(polling)
+    except asyncio.CancelledError:
+        try:
+            result = await asyncio.shield(polling)
+        except Exception:
+            pass
+        else:
+            if cancelled_result_cleanup is not None:
+                cancelled_result_cleanup(result)
+        raise
     finally:
         executor.shutdown(
-            wait=future.done(),
+            wait=polling.done(),
             cancel_futures=True,
         )
+
+
+def _remove_chart_artifacts(artifacts: ChartArtifacts) -> None:
+    for path in (artifacts.png, artifacts.html):
+        if path is not None:
+            path.unlink(missing_ok=True)
 
 
 def _write_chart_artifacts(
