@@ -8,7 +8,7 @@ import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from income_stats.bot.ui import RecordAction
+from income_stats.bot.ui import RecordAction, records_keyboard
 from income_stats.config import AppConfig, PermissionsConfig
 from income_stats.handlers import routers
 from income_stats.handlers.records_handler import (
@@ -27,6 +27,15 @@ from income_stats.services import AnalyticsService, RecordPage, RecordsService
 def test_records_menu_helper_is_importable() -> None:
     assert callable(handle_menu_during_interaction)
     assert records_router.name == "records"
+
+
+def test_records_keyboard_contains_only_open_record_buttons() -> None:
+    keyboard = records_keyboard([make_record()], page=0, total_pages=1)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert len(buttons) == 1
+    assert buttons[0].text.startswith("29.07")
+    assert "record:open:" in (buttons[0].callback_data or "")
 
 
 def make_record(*, chat_id: int = -100, user_id: int = 7) -> IncomeRecord:

@@ -1,4 +1,5 @@
 import asyncio
+import random
 import zipfile
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -12,6 +13,7 @@ from plotly import graph_objects as go
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import (
     ChatSetting,
+    FunItem,
     FunSummaryConfig,
     IncomeRecord,
     Period,
@@ -156,6 +158,23 @@ async def test_summary_keeps_mixed_currencies_separate(tmp_path: Path) -> None:
         service.total(await service.frame(-100))
 
 
+async def test_summary_aggregates_same_currency_records(tmp_path: Path) -> None:
+    service = AnalyticsService(
+        as_repository(
+            FakeAnalyticsRepository(
+                [make_record("first", "1500"), make_record("second", "500")]
+            )
+        ),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    summary = await service.summary(-100, "all")
+
+    assert "Записів: 2" in summary
+    assert "2,000.00 UAH" in summary
+
+
 async def test_period_and_chat_filtering(tmp_path: Path) -> None:
     repository = FakeAnalyticsRepository(
         [
@@ -173,6 +192,9 @@ async def test_period_and_chat_filtering(tmp_path: Path) -> None:
     frame = await service.frame(-100, "month", today=date(2026, 7, 29))
 
     assert list(frame["id"]) == ["today"]
+
+    today = await service.frame(-100, "today", today=date(2026, 7, 29))
+    assert list(today["id"]) == ["today"]
 
 
 async def test_invalid_runtime_period_is_rejected(
@@ -439,6 +461,69 @@ def test_fun_summary_preserves_number_phrase(
     )
 
     assert service.fun_summary(repository.records[0]) == "five hundred"
+
+
+def test_fun_summary_uses_phrase_and_three_affordable_items() -> None:
+    config = FunSummaryConfig(
+        comparisons_per_message=3,
+        phrases=["Гаманець аплодує!"],
+        items={
+            "burger": FunItem(label="бургерів", emoji="🍔", price_uah=Decimal("150")),
+            "coffee": FunItem(label="чашок кави", emoji="☕", price_uah=Decimal("50")),
+            "cucumber": FunItem(label="огірків", emoji="🥒", price_uah=Decimal("25")),
+            "iphone": FunItem(label="айфонів", emoji="📱", price_uah=Decimal("45000")),
+        },
+    )
+    service = AnalyticsService(
+        as_repository(FakeAnalyticsRepository([])),
+        AnalyticsConfig(),
+        StorageConfig(),
+        fun_summary=config,
+    )
+
+    summary = service.fun_summary(
+        make_record("record", "500"),
+        random.Random(7),
+    )
+
+    assert "Гаманець аплодує!" in summary
+    assert "На ці гроші приблизно можна купити:" in summary
+    assert sum(emoji in summary for emoji in ("🍔", "☕", "🥒")) == 3
+    assert "📱" not in summary
+
+
+def test_fun_summary_skips_comparisons_for_foreign_currency() -> None:
+    service = AnalyticsService(
+        as_repository(FakeAnalyticsRepository([])),
+        AnalyticsConfig(),
+        StorageConfig(),
+        fun_summary=FunSummaryConfig(
+            phrases=["Красиво!"],
+            items={
+                "burger": FunItem(
+                    label="бургерів", emoji="🍔", price_uah=Decimal("150")
+                )
+            },
+        ),
+    )
+
+    assert service.fun_summary(make_record("record", "500", currency="USD")) == (
+        "Красиво!"
+    )
+
+
+def test_fun_summary_uses_number_ending() -> None:
+    service = AnalyticsService(
+        as_repository(FakeAnalyticsRepository([])),
+        AnalyticsConfig(),
+        StorageConfig(),
+        fun_summary=FunSummaryConfig(
+            phrases=["Випадкова фраза"],
+            ending_phrases={"77": "Подвійна сімка!"},
+        ),
+    )
+
+    assert service.fun_summary(make_record("record", "1277")) == "Подвійна сімка!"
 
 
 async def test_admin_service_wraps_repository(

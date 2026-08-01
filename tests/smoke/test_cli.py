@@ -67,3 +67,11 @@ def test_analytics_and_export_require_chat_id(tmp_path: Path) -> None:
     assert "--chat-id" in analytics.stderr
     assert export.returncode == 2
     assert "--chat-id" in export.stderr
+
+
+def test_justfile_invokes_uv_directly() -> None:
+    contents = Path("justfile").read_text(encoding="utf-8")
+
+    assert "python -m uv" not in contents
+    assert "uv sync" in contents
+    assert "uv run pytest" in contents

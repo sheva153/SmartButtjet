@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 from income_stats.config import IncomeConfig
-from income_stats.models import IncomeRecord
+from income_stats.models import IncomeRecord, RecordNote
 from income_stats.repositories import RecordsRepository
 from income_stats.services.income_service import IncomeService
 
@@ -30,6 +30,12 @@ class FakeIncomeRepository:
                 return existing
         self.records.append(record)
         return record
+
+    async def export_snapshot(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]:
+        return [record for record in self.records if record.chat_id == chat_id], []
 
 
 @pytest.fixture

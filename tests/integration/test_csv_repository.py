@@ -68,6 +68,18 @@ def test_lists_are_serialized_as_compact_json(
     assert list(frame.columns) == list(IncomeRecord.model_fields)
 
 
+def test_sync_create_is_deduplicated_by_message_and_source(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    first = csv_repository.create_record_sync(make_record(id="first"))
+    second = csv_repository.create_record_sync(make_record(id="second"))
+
+    assert second.id == first.id
+    assert [record.id for record in csv_repository.list_records_sync(-100)] == [
+        first.id
+    ]
+
+
 def test_legacy_category_is_migrated(
     csv_repository: CsvRecordsRepository,
 ) -> None:
@@ -91,11 +103,30 @@ def test_legacy_category_is_migrated(
     assert list(persisted.columns) == list(IncomeRecord.model_fields)
 
 
+def test_legacy_records_without_income_date_are_migrated(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    legacy = make_record().model_dump(mode="json")
+    legacy["categories"] = json.dumps(legacy["categories"])
+    legacy["tags"] = json.dumps(legacy["tags"])
+    legacy.pop("income_date")
+    pd.DataFrame([legacy]).to_csv(csv_repository.records_path, index=False)
+
+    migrated = csv_repository.read_records_sync()
+
+    assert migrated.iloc[0]["income_date"] == "2026-07-29"
+    persisted = pd.read_csv(csv_repository.records_path, dtype=str)
+    assert "income_date" in persisted.columns
+
+
 def test_update_does_not_mutate_changes(
     csv_repository: CsvRecordsRepository,
     saved_record: IncomeRecord,
 ) -> None:
-    changes = {"categories": ["salary", "debt"]}
+    changes = {
+        "amount": Decimal("1700"),
+        "categories": ["sales", "debt"],
+    }
 
     updated = csv_repository.update_record_sync(
         saved_record.id,
@@ -103,7 +134,12 @@ def test_update_does_not_mutate_changes(
         updated_by=9,
     )
 
-    assert changes == {"categories": ["salary", "debt"]}
+    assert changes == {
+        "amount": Decimal("1700"),
+        "categories": ["sales", "debt"],
+    }
+    assert updated.amount == Decimal("1700")
+    assert updated.categories == ["sales", "debt"]
     assert updated.updated_by == 9
 
 
@@ -257,7 +293,21 @@ def test_chat_setting_is_persisted(
     )
 
     assert setting.enabled is False
+    assert setting.updated_by == 7
     assert csv_repository.is_chat_enabled_sync(-100) is False
+
+    csv_repository.set_chat_enabled_sync(-200, enabled=True, updated_by=9)
+    assert csv_repository.is_chat_enabled_sync(-200) is True
+    assert csv_repository.is_chat_enabled_sync(-100) is False
+
+
+def test_missing_csv_columns_are_reported(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.records_path.write_text("wrong,column\n1,2\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="misses columns"):
+        csv_repository.read_records_sync()
 
 
 def test_damaged_csv_preserves_parser_error_as_cause(

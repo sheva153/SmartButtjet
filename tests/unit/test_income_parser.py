@@ -205,6 +205,7 @@ def test_permissive_amount_and_currency_parsing(
     ("text", "currency"),
     [
         ("Отримав 100 жвро", "EUR"),
+        ("Отримав 100 евро", "EUR"),
         ("Payment 100 euroo", "EUR"),
         ("Отримав 100 доллар", "USD"),
         ("Отримав 100 гривен", "UAH"),
@@ -252,6 +253,12 @@ def test_standalone_hour_remains_an_amount_candidate(
     parsed = parse_income_message("зустріч о 15", income_config)
 
     assert [item.amount for item in parsed] == [Decimal("15.00")]
+
+
+def test_text_without_money_does_not_create_manual_draft(
+    income_config: IncomeConfig,
+) -> None:
+    assert parse_income_message("Консультація для нового клієнта", income_config) == []
 
 
 @pytest.mark.parametrize(
@@ -445,3 +452,17 @@ def test_description_is_truncated_to_record_limit(
 
     assert len(parsed[0].description) == 1000
     assert parsed[0].description == "x" * 1000
+
+
+def test_description_removes_money_and_temporal_tokens(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "о 9:30 Отримав 1500 грн за консультацію 10.07",
+        income_config,
+        today=date(2026, 7, 24),
+    )
+
+    assert [item.amount for item in parsed] == [Decimal("1500.00")]
+    assert parsed[0].income_date == date(2026, 7, 10)
+    assert parsed[0].description == "о Отримав за консультацію"
