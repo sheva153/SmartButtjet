@@ -212,6 +212,39 @@ async def test_owner_cannot_update_if_lease_changes_during_read(
     assert unchanged.amount == Decimal("500")
 
 
+async def test_navigation_cannot_release_pin_during_update(
+    record: IncomeRecord,
+) -> None:
+    repository = FakeRecordsRepository([record])
+    update_started = asyncio.Event()
+    allow_update = asyncio.Event()
+    original_update = repository.update_record
+
+    async def paused_update(
+        record_id: str,
+        changes: Mapping[str, object],
+        updated_by: int,
+    ) -> IncomeRecord:
+        update_started.set()
+        await allow_update.wait()
+        return await original_update(record_id, changes, updated_by)
+
+    repository.update_record = paused_update  # type: ignore[method-assign]
+    service = RecordsService(repository, edit_lock_seconds=60)
+    assert service.acquire_edit(record.id, user_id=7)
+    update = asyncio.create_task(
+        service.update_field(record.id, "amount", "999", user_id=7)
+    )
+    await update_started.wait()
+
+    service.navigate_away(record.id, user_id=7)
+    assert not service.acquire_edit(record.id, user_id=8)
+
+    allow_update.set()
+    assert (await update).amount == Decimal("999")
+    assert service.acquire_edit(record.id, user_id=8)
+
+
 @pytest.mark.parametrize(
     ("field", "raw", "expected"),
     [

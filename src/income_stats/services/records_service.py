@@ -96,11 +96,13 @@ class EditLocks:
     def release(self, record_id: str, user_id: int) -> None:
         owner = self._active_owner(record_id)
         if owner is not None and owner[0] == user_id:
-            self._in_progress.discard(record_id)
+            if record_id in self._in_progress:
+                return
             self._locks.pop(record_id, None)
 
     def release_record(self, record_id: str) -> None:
-        self._in_progress.discard(record_id)
+        if record_id in self._in_progress:
+            return
         self._locks.pop(record_id, None)
 
     def is_owned_by(self, record_id: str, user_id: int) -> bool:
@@ -125,6 +127,14 @@ class EditLocks:
             user_id,
             self._clock() + timedelta(seconds=seconds),
         )
+
+    def complete_operation(self, record_id: str, user_id: int) -> None:
+        """Release a pin and its lease from the operation's own completion path."""
+        owner = self._locks.get(record_id)
+        if owner is None or owner[0] != user_id:
+            return
+        self._in_progress.discard(record_id)
+        self._locks.pop(record_id, None)
 
 
 class RecordsService:
@@ -239,7 +249,7 @@ class RecordsService:
             return updated
         finally:
             if release_lock:
-                self.release_edit(record_id, user_id)
+                self._edit_locks.complete_operation(record_id, user_id)
             else:
                 self._edit_locks.abort_operation(
                     record_id,
@@ -274,7 +284,7 @@ class RecordsService:
             return saved
         finally:
             if release_lock:
-                self.release_edit(record_id, user_id)
+                self._edit_locks.complete_operation(record_id, user_id)
             else:
                 self._edit_locks.abort_operation(
                     record_id,
