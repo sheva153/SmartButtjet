@@ -1,14 +1,17 @@
 """Analytics, chart, export, and playful-summary use cases."""
 
+import asyncio
 import json
 import random
 import tempfile
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -20,6 +23,8 @@ import plotly.express as px
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
 from income_stats.repositories import RecordsRepository
+
+_MAX_EXACT_CHART_AMOUNT = Decimal(2**53 - 1) / 100
 
 
 @dataclass(frozen=True)
@@ -70,20 +75,22 @@ class AnalyticsService:
                 pd.DataFrame,
                 frame.loc[(dates >= start) & (dates <= current_date)].copy(),
             )
-        return cast(
-            pd.DataFrame,
-            frame.loc[
-                dates.map(
-                    lambda value: (
-                        (
-                            value.year,
-                            value.month,
+        if period == "month":
+            return cast(
+                pd.DataFrame,
+                frame.loc[
+                    dates.map(
+                        lambda value: (
+                            (
+                                value.year,
+                                value.month,
+                            )
+                            == (current_date.year, current_date.month)
                         )
-                        == (current_date.year, current_date.month)
                     )
-                )
-            ].copy(),
-        )
+                ].copy(),
+            )
+        raise ValueError(f"Unsupported analytics period: {period}")
 
     @staticmethod
     def totals(frame: pd.DataFrame) -> dict[str, Decimal]:
@@ -157,93 +164,27 @@ class AnalyticsService:
         )
         if frame.empty:
             raise ValueError("No data for chart")
-        daily = (
-            frame.assign(
-                day=frame["income_date"],
-                amount=frame["amount"].map(float),
+        if not self._config.static_preview and not self._config.interactive_html:
+            raise ValueError("At least one chart format must be enabled")
+        return await _run_blocking(
+            partial(
+                _write_chart_artifacts,
+                frame,
+                self.artifact_directory,
+                self._config,
             )
-            .groupby(["day", "currency"], as_index=False)["amount"]
-            .sum()
         )
-        figure = px.bar(
-            daily,
-            x="day",
-            y="amount",
-            color="currency",
-            title="Доходи за днями",
-            labels={"day": "Дата", "amount": "Сума", "currency": "Валюта"},
-        )
-        self.artifact_directory.mkdir(parents=True, exist_ok=True)
-        token = uuid4().hex
-        png = (
-            self.artifact_directory / f"income-chart-{token}.png"
-            if self._config.static_preview
-            else None
-        )
-        html = (
-            self.artifact_directory / f"income-chart-{token}.html"
-            if self._config.interactive_html
-            else None
-        )
-        completed = False
-        try:
-            if html is not None:
-                figure.write_html(
-                    html,
-                    include_plotlyjs=True,
-                    full_html=True,
-                )
-            if png is not None:
-                figure.write_image(
-                    png,
-                    format="png",
-                    width=1200,
-                    height=700,
-                    scale=2,
-                )
-            completed = True
-        finally:
-            if not completed:
-                for path in (png, html):
-                    if path is not None:
-                        with suppress(OSError):
-                            path.unlink(missing_ok=True)
-        return ChartArtifacts(png=png, html=html)
 
     async def build_export(self, chat_id: int) -> Path:
-        records = await self._repository.list_records(chat_id)
-        notes: list[RecordNote] = []
-        for record in records:
-            notes.extend(await self._repository.list_notes(record.id))
-        self.artifact_directory.mkdir(parents=True, exist_ok=True)
-        archive = self.artifact_directory / f"income-export-{uuid4().hex}.zip"
-        completed = False
-        try:
-            with tempfile.TemporaryDirectory(prefix="income-export-") as temporary:
-                root = Path(temporary)
-                records_path = root / "records.csv"
-                notes_path = root / "record_notes.csv"
-                _export_frame(records, IncomeRecord.model_fields).to_csv(
-                    records_path,
-                    index=False,
-                )
-                _export_frame(notes, RecordNote.model_fields).to_csv(
-                    notes_path,
-                    index=False,
-                )
-                with zipfile.ZipFile(
-                    archive,
-                    mode="w",
-                    compression=zipfile.ZIP_DEFLATED,
-                ) as bundle:
-                    bundle.write(records_path, arcname="records.csv")
-                    bundle.write(notes_path, arcname="record_notes.csv")
-            completed = True
-        finally:
-            if not completed:
-                with suppress(OSError):
-                    archive.unlink(missing_ok=True)
-        return archive
+        records, notes = await self._repository.export_snapshot(chat_id)
+        return await _run_blocking(
+            partial(
+                _write_export,
+                records,
+                notes,
+                self.artifact_directory,
+            )
+        )
 
     def fun_summary(
         self,
@@ -251,6 +192,121 @@ class AnalyticsService:
         rng: random.Random | random.SystemRandom | None = None,
     ) -> str:
         return build_fun_summary(record, self._fun_summary, rng)
+
+
+async def _run_blocking[ResultT](operation: Callable[[], ResultT]) -> ResultT:
+    """Run blocking chart/export work without relying on asyncio's broken executor."""
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="income-artifact")
+    future = executor.submit(operation)
+    try:
+        while not future.done():
+            await asyncio.sleep(0.01)
+        return future.result()
+    finally:
+        executor.shutdown(
+            wait=future.done(),
+            cancel_futures=True,
+        )
+
+
+def _write_chart_artifacts(
+    frame: pd.DataFrame,
+    artifact_directory: Path,
+    config: AnalyticsConfig,
+) -> ChartArtifacts:
+    daily = cast(
+        pd.DataFrame,
+        (
+            frame.assign(day=frame["income_date"])
+            .groupby(["day", "currency"], as_index=False)["amount"]
+            .agg(lambda values: sum(values, start=Decimal()))
+        ),
+    )
+    if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in daily["amount"]):
+        raise ValueError("Chart amount exceeds exact display range")
+    daily["amount"] = daily["amount"].map(float)
+    figure = px.bar(
+        daily,
+        x="day",
+        y="amount",
+        color="currency",
+        facet_row="currency",
+        barmode="group",
+        title="Доходи за днями",
+        labels={"day": "Дата", "amount": "Сума", "currency": "Валюта"},
+    )
+    artifact_directory.mkdir(parents=True, exist_ok=True)
+    token = uuid4().hex
+    png = (
+        artifact_directory / f"income-chart-{token}.png"
+        if config.static_preview
+        else None
+    )
+    html = (
+        artifact_directory / f"income-chart-{token}.html"
+        if config.interactive_html
+        else None
+    )
+    completed = False
+    try:
+        if html is not None:
+            figure.write_html(
+                html,
+                include_plotlyjs=True,
+                full_html=True,
+            )
+        if png is not None:
+            figure.write_image(
+                png,
+                format="png",
+                width=1200,
+                height=700,
+                scale=2,
+            )
+        completed = True
+    finally:
+        if not completed:
+            for path in (png, html):
+                if path is not None:
+                    with suppress(OSError):
+                        path.unlink(missing_ok=True)
+    return ChartArtifacts(png=png, html=html)
+
+
+def _write_export(
+    records: list[IncomeRecord],
+    notes: list[RecordNote],
+    artifact_directory: Path,
+) -> Path:
+    artifact_directory.mkdir(parents=True, exist_ok=True)
+    archive = artifact_directory / f"income-export-{uuid4().hex}.zip"
+    completed = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="income-export-") as temporary:
+            root = Path(temporary)
+            records_path = root / "records.csv"
+            notes_path = root / "record_notes.csv"
+            _export_frame(records, IncomeRecord.model_fields).to_csv(
+                records_path,
+                index=False,
+            )
+            _export_frame(notes, RecordNote.model_fields).to_csv(
+                notes_path,
+                index=False,
+            )
+            with zipfile.ZipFile(
+                archive,
+                mode="w",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as bundle:
+                bundle.write(records_path, arcname="records.csv")
+                bundle.write(notes_path, arcname="record_notes.csv")
+        completed = True
+    finally:
+        if not completed:
+            with suppress(OSError):
+                archive.unlink(missing_ok=True)
+    return archive
 
 
 def _export_frame(

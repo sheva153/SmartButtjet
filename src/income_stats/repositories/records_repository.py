@@ -69,6 +69,11 @@ class RecordsRepository(Protocol):
 
     async def list_notes(self, record_id: str) -> list[RecordNote]: ...
 
+    async def export_snapshot(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]: ...
+
     async def is_chat_enabled(self, chat_id: int) -> bool: ...
 
     async def set_chat_enabled(
@@ -345,6 +350,26 @@ class CsvRecordsRepository:
                 RecordNote.model_validate(row.to_dict()) for _, row in rows.iterrows()
             ]
 
+    def export_snapshot_sync(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]:
+        with self._sync_lock:
+            records_frame = self._read_records_unlocked()
+            record_rows = records_frame[records_frame["chat_id"] == str(chat_id)]
+            records = [
+                self._record_from_row(row.to_dict())
+                for _, row in record_rows.iterrows()
+            ]
+            record_ids = {record.id for record in records}
+            notes_frame = self._read(self.notes_path, NOTE_COLUMNS)
+            note_rows = notes_frame[notes_frame["record_id"].isin(list(record_ids))]
+            notes = [
+                RecordNote.model_validate(row.to_dict())
+                for _, row in note_rows.iterrows()
+            ]
+            return records, notes
+
     def get_chat_setting_sync(self, chat_id: int) -> ChatSetting | None:
         with self._sync_lock:
             frame = self._read(self.chat_settings_path, CHAT_SETTING_COLUMNS)
@@ -419,6 +444,13 @@ class CsvRecordsRepository:
     async def list_notes(self, record_id: str) -> list[RecordNote]:
         async with self._async_lock:
             return self.list_notes_sync(record_id)
+
+    async def export_snapshot(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]:
+        async with self._async_lock:
+            return self.export_snapshot_sync(chat_id)
 
     async def is_chat_enabled(self, chat_id: int) -> bool:
         async with self._async_lock:

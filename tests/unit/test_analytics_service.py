@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from plotly import graph_objects as go
 
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import (
     ChatSetting,
     FunSummaryConfig,
     IncomeRecord,
+    Period,
     RecordNote,
 )
 from income_stats.repositories import RecordsRepository
@@ -61,6 +63,15 @@ class FakeAnalyticsRepository:
 
     async def list_notes(self, record_id: str) -> list[RecordNote]:
         return [note for note in self.notes if note.record_id == record_id]
+
+    async def export_snapshot(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]:
+        records = [record for record in self.records if record.chat_id == chat_id]
+        record_ids = {record.id for record in records}
+        notes = [note for note in self.notes if note.record_id in record_ids]
+        return records, notes
 
     async def is_chat_enabled(self, chat_id: int) -> bool:
         return self.enabled
@@ -161,6 +172,13 @@ async def test_period_and_chat_filtering(tmp_path: Path) -> None:
     assert list(frame["id"]) == ["today"]
 
 
+async def test_invalid_runtime_period_is_rejected(
+    analytics_service: AnalyticsService,
+) -> None:
+    with pytest.raises(ValueError, match="Unsupported analytics period"):
+        await analytics_service.frame(-100, cast(Period, "bogus"))
+
+
 async def test_chart_builds_png_and_self_contained_html(
     analytics_service: AnalyticsService,
     monkeypatch: pytest.MonkeyPatch,
@@ -218,6 +236,65 @@ async def test_chart_respects_optional_formats(
     assert artifacts.html is not None and artifacts.html.exists()
 
 
+async def test_chart_rejects_when_all_formats_are_disabled(
+    repository: FakeAnalyticsRepository,
+    tmp_path: Path,
+) -> None:
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(static_preview=False, interactive_html=False),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="At least one chart format"):
+        await service.build_chart_artifacts(-100, "all")
+
+
+async def test_mixed_currency_chart_uses_separate_grouped_facets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("uah", "500", currency="UAH"),
+            make_record("usd", "20", currency="USD"),
+        ]
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(static_preview=False, interactive_html=True),
+        StorageConfig(export_directory=tmp_path),
+    )
+    figures: list[go.Figure] = []
+
+    def capture_html(self: go.Figure, path: Path, **kwargs: object) -> None:
+        figures.append(self)
+        Path(path).write_text("plotly", encoding="utf-8")
+
+    monkeypatch.setattr("plotly.graph_objects.Figure.write_html", capture_html)
+
+    await service.build_chart_artifacts(-100, "all")
+
+    figure = figures[0]
+    layout = cast(dict[str, object], figure.to_plotly_json()["layout"])
+    assert layout["barmode"] == "group"
+    assert len(cast(list[object], layout["annotations"])) == 2
+
+
+async def test_chart_rejects_amount_outside_exact_display_range(
+    tmp_path: Path,
+) -> None:
+    repository = FakeAnalyticsRepository([make_record("huge", "90071992547409.92")])
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(static_preview=False, interactive_html=True),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="exact display range"):
+        await service.build_chart_artifacts(-100, "all")
+
+
 async def test_empty_chart_is_rejected(
     tmp_path: Path,
 ) -> None:
@@ -232,14 +309,28 @@ async def test_empty_chart_is_rejected(
 
 
 async def test_export_contains_scoped_records_and_notes(
-    analytics_service: AnalyticsService,
+    repository: FakeAnalyticsRepository,
+    tmp_path: Path,
 ) -> None:
+    other = make_record("other", "999", chat_id=-200)
+    repository.records.append(other)
+    repository.notes.append(RecordNote(record_id=other.id, user_id=8, text="excluded"))
+    analytics_service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+
     archive = await analytics_service.build_export(-100)
 
     with zipfile.ZipFile(archive) as bundle:
         assert set(bundle.namelist()) == {"records.csv", "record_notes.csv"}
-        assert "one" in bundle.read("records.csv").decode()
-        assert "paid" in bundle.read("record_notes.csv").decode()
+        records_csv = bundle.read("records.csv").decode()
+        notes_csv = bundle.read("record_notes.csv").decode()
+        assert "one" in records_csv
+        assert "other" not in records_csv
+        assert "paid" in notes_csv
+        assert "excluded" not in notes_csv
     assert not list(
         path
         for path in analytics_service.artifact_directory.iterdir()

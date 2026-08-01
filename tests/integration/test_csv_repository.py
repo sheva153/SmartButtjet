@@ -221,6 +221,30 @@ def test_list_notes_for_missing_record_raises_domain_error(
         csv_repository.list_notes_sync("missing")
 
 
+def test_export_snapshot_is_chat_scoped(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    included = csv_repository.create_record_sync(make_record())
+    excluded = csv_repository.create_record_sync(
+        make_record(
+            id="other",
+            chat_id=-200,
+            telegram_message_id=11,
+        )
+    )
+    csv_repository.add_note_sync(
+        RecordNote(record_id=included.id, user_id=7, text="included")
+    )
+    csv_repository.add_note_sync(
+        RecordNote(record_id=excluded.id, user_id=8, text="excluded")
+    )
+
+    records, notes = csv_repository.export_snapshot_sync(-100)
+
+    assert [record.id for record in records] == [included.id]
+    assert [note.text for note in notes] == ["included"]
+
+
 def test_chat_setting_is_persisted(
     csv_repository: CsvRecordsRepository,
 ) -> None:

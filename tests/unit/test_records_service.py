@@ -87,6 +87,17 @@ class FakeRecordsRepository:
             raise RecordNotFoundError(record_id)
         return [note for note in self.notes if note.record_id == record_id]
 
+    async def export_snapshot(
+        self,
+        chat_id: int,
+    ) -> tuple[list[IncomeRecord], list[RecordNote]]:
+        records = [
+            record for record in self.records.values() if record.chat_id == chat_id
+        ]
+        record_ids = {record.id for record in records}
+        notes = [note for note in self.notes if note.record_id in record_ids]
+        return records, notes
+
     async def is_chat_enabled(self, chat_id: int) -> bool:
         return True
 
