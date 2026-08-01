@@ -9,5 +9,7 @@ logs/
 *.html
 *.png
 .pytest_cache/
+.coverage
+htmlcov/
 .ruff_cache/
 .pyright/
