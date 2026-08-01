@@ -88,7 +88,10 @@ async def handle_menu_during_interaction(
     elif message.text == MENU_ANALYTICS and analytics_service is not None:
         await message.answer(await analytics_service.summary(message.chat.id))
     elif message.text == MENU_CHART and analytics_service is not None:
-        await send_chart(message, analytics_service)
+        try:
+            await send_chart(message, analytics_service)
+        except ValueError:
+            await message.answer("Немає даних для діаграми.")
     elif message.text == MENU_HELP:
         await message.answer("Дію скасовано. Використай /help.")
     else:

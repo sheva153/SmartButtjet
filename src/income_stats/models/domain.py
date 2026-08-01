@@ -84,8 +84,12 @@ class IncomeRecord(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_callback_safe_id(cls, value: str) -> str:
-        if not value.isascii():
-            raise ValueError("Record ID must contain ASCII characters only")
+        if not value.isascii() or not all(
+            character.isalnum() or character in "_-" for character in value
+        ):
+            raise ValueError(
+                "Record ID may contain only ASCII letters, digits, '_' and '-'"
+            )
         return value
 
     @field_validator("currency", mode="before")

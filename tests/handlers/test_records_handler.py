@@ -80,6 +80,33 @@ async def test_menu_during_edit_clears_state_and_releases_lock() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chart_menu_during_edit_reports_empty_data() -> None:
+    message = SimpleNamespace(
+        text="📈 Діаграма",
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"record_id": "one"}),
+        clear=AsyncMock(),
+    )
+    records = SimpleNamespace(navigate_away=Mock())
+    analytics = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(side_effect=ValueError("empty"))
+    )
+
+    assert await handle_menu_during_interaction(
+        cast(Message, message),
+        cast(FSMContext, state),
+        cast(RecordsService, records),
+        cast(AnalyticsService, analytics),
+    )
+
+    message.answer.assert_awaited_once_with("Немає даних для діаграми.")
+
+
+@pytest.mark.asyncio
 async def test_invalid_edit_keeps_state_and_lock() -> None:
     message = SimpleNamespace(
         text="bad",

@@ -158,7 +158,7 @@ def test_record_rejects_non_positive_amount() -> None:
 
 
 def test_record_id_is_bounded_for_telegram_callbacks() -> None:
-    for record_id in ("x" * 33, "🙂" * 32):
+    for record_id in ("x" * 33, "🙂" * 32, ":" * 32):
         with pytest.raises(ValidationError):
             IncomeRecord(
                 id=record_id,
