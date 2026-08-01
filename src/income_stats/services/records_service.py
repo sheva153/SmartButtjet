@@ -61,6 +61,7 @@ class EditLocks:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._locks: dict[str, tuple[int, datetime]] = {}
+        self._in_progress: set[str] = set()
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def _active_owner(
@@ -70,7 +71,11 @@ class EditLocks:
         now: datetime | None = None,
     ) -> tuple[int, datetime] | None:
         owner = self._locks.get(record_id)
-        if owner is not None and owner[1] <= (now or self._clock()):
+        if (
+            owner is not None
+            and record_id not in self._in_progress
+            and owner[1] <= (now or self._clock())
+        ):
             self._locks.pop(record_id, None)
             return None
         return owner
@@ -80,6 +85,8 @@ class EditLocks:
         owner = self._active_owner(record_id, now=now)
         if owner is not None and owner[0] != user_id:
             return False
+        if record_id in self._in_progress:
+            return owner is not None and owner[0] == user_id
         self._locks[record_id] = (
             user_id,
             now + timedelta(seconds=seconds),
@@ -89,14 +96,35 @@ class EditLocks:
     def release(self, record_id: str, user_id: int) -> None:
         owner = self._active_owner(record_id)
         if owner is not None and owner[0] == user_id:
+            self._in_progress.discard(record_id)
             self._locks.pop(record_id, None)
 
     def release_record(self, record_id: str) -> None:
+        self._in_progress.discard(record_id)
         self._locks.pop(record_id, None)
 
     def is_owned_by(self, record_id: str, user_id: int) -> bool:
         owner = self._active_owner(record_id)
         return owner is not None and owner[0] == user_id
+
+    def begin_operation(self, record_id: str, user_id: int) -> bool:
+        """Pin a valid lease across repository awaits."""
+        owner = self._active_owner(record_id)
+        if owner is None or owner[0] != user_id or record_id in self._in_progress:
+            return False
+        self._in_progress.add(record_id)
+        return True
+
+    def abort_operation(self, record_id: str, user_id: int, seconds: int) -> None:
+        """Unpin a failed operation while keeping the owner's edit lease."""
+        owner = self._locks.get(record_id)
+        if owner is None or owner[0] != user_id:
+            return
+        self._in_progress.discard(record_id)
+        self._locks[record_id] = (
+            user_id,
+            self._clock() + timedelta(seconds=seconds),
+        )
 
 
 class RecordsService:
@@ -187,24 +215,37 @@ class RecordsService:
         if current is None:
             self.release_edit(record_id, user_id)
             raise RecordNotFoundError(record_id)
-        validated = IncomeRecord.model_validate(
-            {
-                **current.model_dump(),
-                field: value,
-            }
-        )
-        value = getattr(validated, field)
+        if not self._edit_locks.begin_operation(record_id, user_id):
+            raise EditLockError(record_id)
+        release_lock = False
         try:
+            validated = IncomeRecord.model_validate(
+                {
+                    **current.model_dump(),
+                    field: value,
+                }
+            )
+            value = getattr(validated, field)
             updated = await self._repository.update_record(
                 record_id,
                 {field: value},
                 updated_by=user_id,
             )
         except RecordNotFoundError:
-            self.release_edit(record_id, user_id)
+            release_lock = True
             raise
-        self.release_edit(record_id, user_id)
-        return updated
+        else:
+            release_lock = True
+            return updated
+        finally:
+            if release_lock:
+                self.release_edit(record_id, user_id)
+            else:
+                self._edit_locks.abort_operation(
+                    record_id,
+                    user_id,
+                    self._edit_lock_seconds,
+                )
 
     async def add_note(
         self,
@@ -214,19 +255,32 @@ class RecordsService:
         username: str,
         text: str,
     ) -> RecordNote:
-        note = RecordNote(
-            record_id=record_id,
-            user_id=user_id,
-            username=username,
-            text=text,
-        )
+        if not self._edit_locks.begin_operation(record_id, user_id):
+            raise EditLockError(record_id)
+        release_lock = False
         try:
+            note = RecordNote(
+                record_id=record_id,
+                user_id=user_id,
+                username=username,
+                text=text,
+            )
             saved = await self._repository.add_note(note)
         except RecordNotFoundError:
-            self.release_edit(record_id, user_id)
+            release_lock = True
             raise
-        self.release_edit(record_id, user_id)
-        return saved
+        else:
+            release_lock = True
+            return saved
+        finally:
+            if release_lock:
+                self.release_edit(record_id, user_id)
+            else:
+                self._edit_locks.abort_operation(
+                    record_id,
+                    user_id,
+                    self._edit_lock_seconds,
+                )
 
     async def delete(self, record_id: str) -> bool:
         deleted = await self._repository.delete_record(record_id)

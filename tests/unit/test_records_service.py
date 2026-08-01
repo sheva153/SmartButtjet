@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -174,6 +175,43 @@ async def test_expired_owner_cannot_update_after_reacquisition(
         await service.update_field(record.id, "amount", "999", user_id=7)
 
 
+async def test_owner_cannot_update_if_lease_changes_during_read(
+    record: IncomeRecord,
+) -> None:
+    current = datetime(2026, 7, 29, 10, tzinfo=UTC)
+    repository = FakeRecordsRepository([record])
+    read_started = asyncio.Event()
+    allow_read = asyncio.Event()
+    original_get = repository.get_record
+
+    async def paused_get(record_id: str) -> IncomeRecord | None:
+        read_started.set()
+        await allow_read.wait()
+        return await original_get(record_id)
+
+    repository.get_record = paused_get  # type: ignore[method-assign]
+    service = RecordsService(
+        repository,
+        edit_lock_seconds=60,
+        edit_locks=EditLocks(clock=lambda: current),
+    )
+    assert service.acquire_edit(record.id, user_id=7)
+    update = asyncio.create_task(
+        service.update_field(record.id, "amount", "999", user_id=7)
+    )
+    await read_started.wait()
+    current += timedelta(seconds=61)
+    assert service.acquire_edit(record.id, user_id=8)
+    allow_read.set()
+
+    with pytest.raises(EditLockError):
+        await update
+
+    unchanged = await service.get(record.id)
+    assert unchanged is not None
+    assert unchanged.amount == Decimal("500")
+
+
 @pytest.mark.parametrize(
     ("field", "raw", "expected"),
     [
@@ -297,6 +335,24 @@ async def test_note_success_and_missing_list_have_domain_outcomes(
     repository.records.clear()
     with pytest.raises(RecordNotFoundError):
         await records_service.list_notes(record.id)
+
+
+async def test_non_owner_cannot_add_note(
+    records_service: RecordsService,
+    repository: FakeRecordsRepository,
+    record: IncomeRecord,
+) -> None:
+    assert records_service.acquire_edit(record.id, user_id=7)
+
+    with pytest.raises(EditLockError):
+        await records_service.add_note(
+            record.id,
+            user_id=8,
+            username="other",
+            text="note",
+        )
+
+    assert repository.notes == []
 
 
 async def test_page_is_latest_first_and_clamped() -> None:
