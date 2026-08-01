@@ -81,6 +81,13 @@ class IncomeRecord(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_by: int
 
+    @field_validator("id")
+    @classmethod
+    def validate_callback_safe_id(cls, value: str) -> str:
+        if not value.isascii():
+            raise ValueError("Record ID must contain ASCII characters only")
+        return value
+
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:

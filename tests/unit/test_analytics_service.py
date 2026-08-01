@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from threading import Event
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from plotly import graph_objects as go
@@ -313,8 +313,10 @@ async def test_chart_accepts_adjacent_cents_inside_safe_range(
         AnalyticsConfig(static_preview=False, interactive_html=True),
         StorageConfig(export_directory=tmp_path),
     )
+    figures: list[go.Figure] = []
 
     def fake_html(self: go.Figure, path: Path, **kwargs: object) -> None:
+        figures.append(self)
         Path(path).write_text("plotly", encoding="utf-8")
 
     monkeypatch.setattr("plotly.graph_objects.Figure.write_html", fake_html)
@@ -322,6 +324,9 @@ async def test_chart_accepts_adjacent_cents_inside_safe_range(
     artifacts = await service.build_chart_artifacts(-100, "all")
 
     assert artifacts.html is not None and artifacts.html.exists()
+    figure = cast(Any, figures[0])
+    plotted = [float(trace.y[0]) for trace in figure.data]
+    assert len(set(plotted)) == 2
 
 
 async def test_cancelled_worker_cleans_returned_artifact(tmp_path: Path) -> None:

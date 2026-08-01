@@ -158,17 +158,18 @@ def test_record_rejects_non_positive_amount() -> None:
 
 
 def test_record_id_is_bounded_for_telegram_callbacks() -> None:
-    with pytest.raises(ValidationError):
-        IncomeRecord(
-            id="x" * 33,
-            telegram_message_id=1,
-            chat_id=-100,
-            user_id=7,
-            original_text="1",
-            amount=Decimal("1"),
-            currency="UAH",
-            updated_by=7,
-        )
+    for record_id in ("x" * 33, "🙂" * 32):
+        with pytest.raises(ValidationError):
+            IncomeRecord(
+                id=record_id,
+                telegram_message_id=1,
+                chat_id=-100,
+                user_id=7,
+                original_text="1",
+                amount=Decimal("1"),
+                currency="UAH",
+                updated_by=7,
+            )
 
 
 @pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-1")])

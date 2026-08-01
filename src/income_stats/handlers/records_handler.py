@@ -135,6 +135,7 @@ async def interaction_menu_handler(
     )
 
 
+@records_router.message(Command("records"))
 @records_router.message(F.text == MENU_RECORDS)
 async def records_handler(message: Message, records_service: RecordsService) -> None:
     await send_records_page(message, records_service, 0)

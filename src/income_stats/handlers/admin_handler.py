@@ -30,7 +30,7 @@ async def is_telegram_admin(message: Message, user_id: int, config: AppConfig) -
     return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 
 
-@admin_router.message(Command("help"))
+@admin_router.message(Command("start", "help"))
 @admin_router.message(F.text == MENU_HELP)
 async def help_handler(message: Message) -> None:
     await message.answer(
