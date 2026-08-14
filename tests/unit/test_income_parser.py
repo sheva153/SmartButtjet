@@ -437,22 +437,32 @@ def test_bare_valid_date_remains_protected(income_config: IncomeConfig) -> None:
 @pytest.mark.parametrize(
     ("text", "amount"),
     [
-        ("Отримав 12.05", Decimal("12.05")),
-        ("Отримав 20.99", Decimal("20.99")),
-        ("Заробив 1.50", Decimal("1.50")),
+        ("Отримав 20.99", Decimal("20.99")),  # month 99 — cannot be a date
+        ("Заробив 1.50", Decimal("1.50")),  # month 50 — cannot be a date
+        ("Продав 31.75", Decimal("31.75")),  # month 75 — cannot be a date
     ],
 )
-def test_lone_dot_amount_with_income_context_records_as_income(
+def test_lone_invalid_dd_mm_records_as_income(
     text: str,
     amount: Decimal,
     income_config: IncomeConfig,
 ) -> None:
-    # A sole dotted amount matches the DD.MM date pattern; with income context
-    # and no other number it is the amount, not a date — matching its comma form.
+    # A sole dotted token that cannot be a real date is money, not an error —
+    # matching its comma form, instead of raising "invalid date".
     parsed = parse_income_message(text, income_config, today=date(2026, 7, 24))
 
     assert [item.amount for item in parsed] == [amount]
     assert parsed[0].income_date == date(2026, 7, 24)
+
+
+@pytest.mark.parametrize("text", ["Отримав 12.05", "Отримав зарплату 25.12"])
+def test_lone_valid_dd_mm_stays_a_date(
+    text: str,
+    income_config: IncomeConfig,
+) -> None:
+    # A sole *valid* DD.MM stays a date even with income context: "зарплату
+    # 25.12" (received on Dec 25, no amount) must not become phantom income.
+    assert parse_income_message(text, income_config, today=date(2026, 7, 24)) == []
 
 
 def test_dot_amount_alongside_real_amount_stays_a_date(

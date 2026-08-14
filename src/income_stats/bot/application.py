@@ -34,7 +34,12 @@ BOT_COMMANDS = (
 def build_dispatcher(config: AppConfig) -> Dispatcher:
     """Compose application services and expose them as aiogram workflow data."""
     repository = CsvRecordsRepository(config.storage)
-    repository.migrate_records_sync()
+    # Best-effort schema upgrade: never let a corrupt CSV block bot startup — a
+    # bad file still surfaces lazily on the first record operation, as before.
+    try:
+        repository.migrate_records_sync()
+    except ValueError:
+        logger.exception("Records schema migration skipped")
     dispatcher = Dispatcher(
         income_service=IncomeService(repository, config.income),
         records_service=RecordsService(

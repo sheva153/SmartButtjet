@@ -168,9 +168,8 @@ class CsvRecordsRepository:
                 with suppress(OSError):
                     temporary.unlink(missing_ok=True)
 
-    @classmethod
+    @staticmethod
     def _normalize_records(
-        cls,
         frame: pd.DataFrame,
         path: Path,
     ) -> tuple[pd.DataFrame, bool]:
