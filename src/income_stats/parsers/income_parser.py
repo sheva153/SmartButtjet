@@ -83,6 +83,29 @@ DATE_PATTERN = re.compile(
     r"(?P<month>\d{1,2})(?:(?P=separator)(?P<year>\d{4}))?"
     r"(?![\d./-])"
 )
+UKRAINIAN_MONTHS = {
+    "січня": 1,
+    "лютого": 2,
+    "березня": 3,
+    "квітня": 4,
+    "травня": 5,
+    "червня": 6,
+    "липня": 7,
+    "серпня": 8,
+    "вересня": 9,
+    "жовтня": 10,
+    "листопада": 11,
+    "грудня": 12,
+}
+UKRAINIAN_TEXT_DATE_PATTERN = re.compile(
+    rf"(?<!\d)(?P<day>\d{{1,2}})\s+"
+    rf"(?P<month>{'|'.join(UKRAINIAN_MONTHS)})(?!\w)",
+    re.IGNORECASE,
+)
+UKRAINIAN_DAY_OF_MONTH_PATTERN = re.compile(
+    r"(?<!\d)(?P<day>\d{1,2})\s+(?:числа|число)(?!\w)",
+    re.IGNORECASE,
+)
 RELATIVE_DATE_PATTERN = re.compile(
     r"\b(?P<relative>сьогодні|вчора|today|yesterday)\b",
     re.IGNORECASE,
@@ -235,6 +258,25 @@ def _protected_context(
                 int(match.group("month")),
                 int(match.group("day")),
             )
+        except ValueError:
+            invalid_dates.append(match.group(0))
+            continue
+        date_spans.append(match.span())
+        absolute_dates.append(parsed_date)
+
+    textual_date_matches = [
+        (match, UKRAINIAN_MONTHS[match.group("month").casefold()])
+        for match in UKRAINIAN_TEXT_DATE_PATTERN.finditer(text)
+    ]
+    textual_date_matches.extend(
+        (match, current_date.month)
+        for match in UKRAINIAN_DAY_OF_MONTH_PATTERN.finditer(text)
+    )
+    for match, month in textual_date_matches:
+        if _overlaps(match.span(), base_spans_tuple, base_starts):
+            continue
+        try:
+            parsed_date = date(current_date.year, month, int(match.group("day")))
         except ValueError:
             invalid_dates.append(match.group(0))
             continue

@@ -12,6 +12,7 @@ from loguru import logger
 
 from income_stats.bot.ui import MENU_LABELS, format_success, success_keyboard
 from income_stats.config import AppConfig
+from income_stats.models import IncomeRecord
 from income_stats.parsers import IncomeParseError
 from income_stats.services import AdminService, AnalyticsService, IncomeService
 
@@ -57,14 +58,24 @@ async def income_message_handler(
     except IncomeParseError:
         await message.answer("Некоректна дата. Виправ повідомлення та надішли ще раз.")
         return
+
+    for record in records:
+        logger.bind(
+            record_id=record.id,
+            chat_id=record.chat_id,
+            user_id=record.user_id,
+            amount=f"{record.amount:.2f}",
+            currency=record.currency,
+        ).info("Income recorded")
+
+    async def deliver_reply(record: IncomeRecord) -> None:
+        await message.reply(
+            format_success(record, analytics_service.fun_summary(record)),
+            reply_markup=success_keyboard(record),
+        )
+
     results = await asyncio.gather(
-        *(
-            message.reply(
-                format_success(record, analytics_service.fun_summary(record)),
-                reply_markup=success_keyboard(record),
-            )
-            for record in records
-        ),
+        *(deliver_reply(record) for record in records),
         return_exceptions=True,
     )
     for result in results:

@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiogram.types import Message
@@ -9,10 +9,25 @@ from aiogram.types import Message
 from income_stats.config import AppConfig
 from income_stats.handlers.analytics_handler import (
     analytics_router,
+    chart_handler,
     export_handler,
     send_chart,
+    stats_handler,
 )
 from income_stats.services import AnalyticsService, ChartArtifacts
+
+
+class UnhashableAwaitable:
+    __hash__ = None  # pyright: ignore[reportAssignmentType]
+
+    def __init__(self, awaited: Mock) -> None:
+        self.awaited = awaited
+
+    def __await__(self):  # type: ignore[no-untyped-def]
+        async def complete() -> None:
+            self.awaited()
+
+        return complete().__await__()
 
 
 def test_chart_sender_is_importable() -> None:
@@ -57,6 +72,76 @@ async def test_chart_attempts_html_when_png_delivery_fails(tmp_path: Path) -> No
 
     message.answer_document.assert_awaited_once()
     assert not png.exists() and not html.exists()
+
+
+@pytest.mark.asyncio
+async def test_chart_accepts_unhashable_aiogram_awaitables(tmp_path: Path) -> None:
+    png, html = tmp_path / "chart.png", tmp_path / "chart.html"
+    png.write_bytes(b"png")
+    html.write_text("html")
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(png, html))
+    )
+    photo_awaited = Mock()
+    document_awaited = Mock()
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=-100),
+        answer_photo=Mock(
+            side_effect=lambda *args, **kwargs: UnhashableAwaitable(photo_awaited)
+        ),
+        answer_document=Mock(
+            side_effect=lambda *args, **kwargs: UnhashableAwaitable(document_awaited)
+        ),
+    )
+
+    await send_chart(cast(Message, message), cast(AnalyticsService, service))
+
+    photo_awaited.assert_called_once()
+    document_awaited.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stats_audits_requesting_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    bound_logger = Mock()
+    bind = Mock(return_value=bound_logger)
+    monkeypatch.setattr("income_stats.handlers.analytics_handler.logger.bind", bind)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+    )
+    service = SimpleNamespace(summary=AsyncMock(return_value="summary"))
+
+    await stats_handler(cast(Message, message), cast(AnalyticsService, service))
+
+    bind.assert_called_once_with(chat_id=-100, user_id=7)
+    bound_logger.info.assert_called_once_with("Analytics requested")
+
+
+@pytest.mark.asyncio
+async def test_chart_audits_requesting_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound_logger = Mock()
+    bind = Mock(return_value=bound_logger)
+    monkeypatch.setattr("income_stats.handlers.analytics_handler.logger.bind", bind)
+    html = tmp_path / "chart.html"
+    html.write_text("html")
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+        answer_document=AsyncMock(),
+    )
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(None, html))
+    )
+
+    await chart_handler(cast(Message, message), cast(AnalyticsService, service))
+
+    bind.assert_called_once_with(chat_id=-100, user_id=7)
+    bound_logger.info.assert_called_once_with("Chart requested")
 
 
 @pytest.mark.asyncio

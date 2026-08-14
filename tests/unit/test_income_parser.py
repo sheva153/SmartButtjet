@@ -434,6 +434,38 @@ def test_bare_valid_date_remains_protected(income_config: IncomeConfig) -> None:
     assert parse_income_message("подія 10.07", income_config) == []
 
 
+@pytest.mark.parametrize("text", ["23 квітня", "23 числа"])
+def test_bare_ukrainian_text_date_is_not_income(
+    text: str,
+    income_config: IncomeConfig,
+) -> None:
+    assert parse_income_message(text, income_config, today=date(2026, 7, 24)) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Отримав 500 грн 23 квітня", date(2026, 4, 23)),
+        ("Отримав 500 грн 23 числа", date(2026, 7, 23)),
+    ],
+)
+def test_ukrainian_text_date_is_extracted_without_becoming_amount(
+    text: str,
+    expected: date,
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(text, income_config, today=date(2026, 7, 24))
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+    assert parsed[0].income_date == expected
+
+
+def test_amount_23_with_currency_remains_income(income_config: IncomeConfig) -> None:
+    parsed = parse_income_message("Отримав 23 грн", income_config)
+
+    assert [item.amount for item in parsed] == [Decimal("23.00")]
+
+
 def test_invalid_bare_date_preserves_validation_error(
     income_config: IncomeConfig,
 ) -> None:

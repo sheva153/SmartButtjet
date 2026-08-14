@@ -1,6 +1,7 @@
 """Analytics, dual-chart, and export Telegram handlers."""
 
 import asyncio
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -22,9 +23,9 @@ async def send_chart(message: Message, service: AnalyticsService) -> None:
     with temporary_artifacts(*paths):
         deliveries = []
         if artifacts.png is not None:
-            deliveries.append(message.answer_photo(FSInputFile(artifacts.png)))
+            deliveries.append(_send_photo(message, artifacts.png))
         if artifacts.html is not None:
-            deliveries.append(message.answer_document(FSInputFile(artifacts.html)))
+            deliveries.append(_send_document(message, artifacts.html))
         results = await asyncio.gather(*deliveries, return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
@@ -33,15 +34,33 @@ async def send_chart(message: Message, service: AnalyticsService) -> None:
                 )
 
 
+async def _send_photo(message: Message, path: Path) -> None:
+    await message.answer_photo(FSInputFile(path))
+
+
+async def _send_document(message: Message, path: Path) -> None:
+    await message.answer_document(FSInputFile(path))
+
+
 @analytics_router.message(Command("stats"))
 @analytics_router.message(F.text == MENU_ANALYTICS)
 async def stats_handler(message: Message, analytics_service: AnalyticsService) -> None:
+    user = message.from_user
+    logger.bind(
+        chat_id=message.chat.id,
+        user_id=user.id if user is not None else None,
+    ).info("Analytics requested")
     await message.answer(await analytics_service.summary(message.chat.id))
 
 
 @analytics_router.message(Command("chart"))
 @analytics_router.message(F.text == MENU_CHART)
 async def chart_handler(message: Message, analytics_service: AnalyticsService) -> None:
+    user = message.from_user
+    logger.bind(
+        chat_id=message.chat.id,
+        user_id=user.id if user is not None else None,
+    ).info("Chart requested")
     try:
         await send_chart(message, analytics_service)
     except ValueError:

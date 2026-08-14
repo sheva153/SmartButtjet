@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
+from loguru import logger
 
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
@@ -282,13 +283,23 @@ def _write_chart_artifacts(
                 full_html=True,
             )
         if png is not None:
-            figure.write_image(
-                png,
-                format="png",
-                width=1200,
-                height=700,
-                scale=2,
-            )
+            try:
+                figure.write_image(
+                    png,
+                    format="png",
+                    width=1200,
+                    height=700,
+                    scale=2,
+                )
+            except Exception as error:
+                if html is None:
+                    raise
+                png.unlink(missing_ok=True)
+                png = None
+                logger.warning(
+                    "PNG chart preview unavailable; using HTML fallback: {}",
+                    error,
+                )
         completed = True
     finally:
         if not completed:

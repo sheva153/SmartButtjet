@@ -222,7 +222,7 @@ async def test_chart_builds_png_and_self_contained_html(
     assert first != second
 
 
-async def test_chart_failure_cleans_partial_artifacts(
+async def test_chart_failure_falls_back_to_html(
     analytics_service: AnalyticsService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -231,10 +231,10 @@ async def test_chart_failure_cleans_partial_artifacts(
 
     monkeypatch.setattr("plotly.graph_objects.Figure.write_image", fail_write_image)
 
-    with pytest.raises(RuntimeError, match="no browser"):
-        await analytics_service.build_chart_artifacts(-100, "all")
+    artifacts = await analytics_service.build_chart_artifacts(-100, "all")
 
-    assert list(analytics_service.artifact_directory.iterdir()) == []
+    assert artifacts.png is None
+    assert artifacts.html is not None and artifacts.html.exists()
 
 
 async def test_chart_respects_optional_formats(

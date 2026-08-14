@@ -33,7 +33,9 @@ permissions:
 
 analytics:
   default_period: month
-  static_preview: true
+  # PNG preview needs a native Chrome build; this server is ARM64 while the
+  # downloaded Kaleido browser is x86-64. Keep the portable HTML chart enabled.
+  static_preview: false
   interactive_html: true
 
 fun_summary:
