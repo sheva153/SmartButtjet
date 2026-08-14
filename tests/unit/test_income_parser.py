@@ -434,6 +434,40 @@ def test_bare_valid_date_remains_protected(income_config: IncomeConfig) -> None:
     assert parse_income_message("подія 10.07", income_config) == []
 
 
+@pytest.mark.parametrize(
+    ("text", "amount"),
+    [
+        ("Отримав 12.05", Decimal("12.05")),
+        ("Отримав 20.99", Decimal("20.99")),
+        ("Заробив 1.50", Decimal("1.50")),
+    ],
+)
+def test_lone_dot_amount_with_income_context_records_as_income(
+    text: str,
+    amount: Decimal,
+    income_config: IncomeConfig,
+) -> None:
+    # A sole dotted amount matches the DD.MM date pattern; with income context
+    # and no other number it is the amount, not a date — matching its comma form.
+    parsed = parse_income_message(text, income_config, today=date(2026, 7, 24))
+
+    assert [item.amount for item in parsed] == [amount]
+    assert parsed[0].income_date == date(2026, 7, 24)
+
+
+def test_dot_amount_alongside_real_amount_stays_a_date(
+    income_config: IncomeConfig,
+) -> None:
+    # When a real income amount is present, a DD.MM token is a backdate, not a
+    # second income.
+    parsed = parse_income_message(
+        "Отримав 800 грн 10.07", income_config, today=date(2026, 7, 24)
+    )
+
+    assert [item.amount for item in parsed] == [Decimal("800.00")]
+    assert parsed[0].income_date == date(2026, 7, 10)
+
+
 @pytest.mark.parametrize("text", ["23 квітня", "23 числа"])
 def test_bare_ukrainian_text_date_is_not_income(
     text: str,

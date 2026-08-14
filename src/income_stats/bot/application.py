@@ -34,6 +34,7 @@ BOT_COMMANDS = (
 def build_dispatcher(config: AppConfig) -> Dispatcher:
     """Compose application services and expose them as aiogram workflow data."""
     repository = CsvRecordsRepository(config.storage)
+    repository.migrate_records_sync()
     dispatcher = Dispatcher(
         income_service=IncomeService(repository, config.income),
         records_service=RecordsService(

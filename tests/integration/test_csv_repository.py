@@ -95,6 +95,10 @@ def test_legacy_category_is_migrated(
     assert json.loads(records.iloc[0]["tags"]) == []
     assert "category" not in records.columns
     assert list(records.columns) == list(IncomeRecord.model_fields)
+
+    # Reads normalize in memory only; the file is upgraded on the explicit
+    # write-path step, never as a side effect of reading.
+    csv_repository.migrate_records_sync()
     persisted = pd.read_csv(
         csv_repository.records_path,
         dtype=str,
@@ -115,8 +119,29 @@ def test_legacy_records_without_income_date_are_migrated(
     migrated = csv_repository.read_records_sync()
 
     assert migrated.iloc[0]["income_date"] == "2026-07-29"
+
+    csv_repository.migrate_records_sync()
     persisted = pd.read_csv(csv_repository.records_path, dtype=str)
     assert "income_date" in persisted.columns
+
+
+def test_read_does_not_rewrite_records_file(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    legacy = make_record().model_dump(mode="json")
+    legacy["category"] = "salary"
+    legacy.pop("categories")
+    legacy.pop("tags")
+    pd.DataFrame([legacy]).to_csv(csv_repository.records_path, index=False)
+    before = csv_repository.records_path.read_text(encoding="utf-8")
+
+    csv_repository.read_records_sync()
+
+    # A plain read must never mutate the file on disk: the legacy schema stays
+    # untouched until an explicit migration or write happens.
+    after = csv_repository.records_path.read_text(encoding="utf-8")
+    assert after == before
+    assert "category" in after  # legacy column untouched, not migrated away
 
 
 def test_update_does_not_mutate_changes(

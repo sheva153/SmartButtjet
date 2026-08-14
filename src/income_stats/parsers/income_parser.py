@@ -240,6 +240,19 @@ def _protected_context(
     )
     explicit_currency_starts = tuple(start for start, _ in explicit_currency_spans)
 
+    # A lone amount typed with a dot (20.99, 12.05) also matches the DD.MM date
+    # pattern. When the message clearly reports income and that token is the only
+    # money-like number, treat it as the amount instead of a date — otherwise a
+    # dot amount is silently dropped (12.05) or rejected (20.99) while its comma
+    # form records the same value.
+    money_spans = tuple(
+        match.span()
+        for match in MONEY_PATTERN.finditer(text)
+        if not _overlaps(match.span(), base_spans_tuple, base_starts)
+    )
+    sole_money_span = money_spans[0] if len(money_spans) == 1 else None
+    has_income_context = bool(STREET_INCOME_CONTEXT_PATTERN.search(text))
+
     date_spans: list[tuple[int, int]] = []
     absolute_dates: list[date] = []
     invalid_dates: list[str] = []
@@ -250,6 +263,13 @@ def _protected_context(
             match.span(),
             explicit_currency_spans,
             explicit_currency_starts,
+        ):
+            continue
+        if (
+            has_income_context
+            and sole_money_span is not None
+            and match.span() == sole_money_span
+            and match.group("year") is None
         ):
             continue
         try:

@@ -62,6 +62,19 @@ async def _can_delete(
     )
 
 
+async def _can_edit(
+    message: Message,
+    user_id: int,
+    record: IncomeRecord,
+    config: AppConfig,
+) -> bool:
+    if config.permissions.everyone_can_edit:
+        return True
+    if record.user_id == user_id:
+        return True
+    return await is_telegram_admin(message, user_id, config)
+
+
 async def _clear_interaction(
     state: FSMContext, service: RecordsService, user_id: int
 ) -> None:
@@ -195,6 +208,7 @@ async def _start_edit(
     query: CallbackQuery,
     state: FSMContext,
     service: RecordsService,
+    config: AppConfig,
     record_id: str,
     field: str,
 ) -> None:
@@ -202,6 +216,12 @@ async def _start_edit(
     if record is None:
         return
     user = query.from_user
+    if not await _can_edit(cast(Message, query.message), user.id, record, config):
+        await query.answer(
+            "Редагувати може лише автор запису або адміністратор.",
+            show_alert=True,
+        )
+        return
     if not service.acquire_edit(record_id, user.id):
         await query.answer("Цей запис зараз редагує інший учасник.", show_alert=True)
         return
@@ -218,9 +238,15 @@ async def edit_callback(
     callback_data: RecordAction,
     state: FSMContext,
     records_service: RecordsService,
+    app_config: AppConfig,
 ) -> None:
     await _start_edit(
-        query, state, records_service, callback_data.record_id, callback_data.value
+        query,
+        state,
+        records_service,
+        app_config,
+        callback_data.record_id,
+        callback_data.value,
     )
 
 
@@ -230,8 +256,11 @@ async def note_callback(
     callback_data: RecordAction,
     state: FSMContext,
     records_service: RecordsService,
+    app_config: AppConfig,
 ) -> None:
-    await _start_edit(query, state, records_service, callback_data.record_id, "note")
+    await _start_edit(
+        query, state, records_service, app_config, callback_data.record_id, "note"
+    )
 
 
 @records_router.callback_query(RecordAction.filter(F.action == "open"))

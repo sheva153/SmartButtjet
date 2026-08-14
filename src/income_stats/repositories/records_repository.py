@@ -169,11 +169,18 @@ class CsvRecordsRepository:
                     temporary.unlink(missing_ok=True)
 
     @classmethod
-    def _migrate_records(
+    def _normalize_records(
         cls,
         frame: pd.DataFrame,
         path: Path,
-    ) -> pd.DataFrame:
+    ) -> tuple[pd.DataFrame, bool]:
+        """Bring a records frame to the current schema in memory only.
+
+        Returns the ordered frame plus a flag telling whether the on-disk file
+        differs from the canonical schema and would benefit from a rewrite. This
+        never touches disk — persistence is a separate, explicit step so that a
+        plain read can never mutate or lose data.
+        """
         migrated = False
         if "income_date" not in frame.columns and "created_at" in frame.columns:
             frame["income_date"] = pd.to_datetime(
@@ -203,9 +210,22 @@ class CsvRecordsRepository:
         if missing:
             raise ValueError(f"CSV {path} misses columns: {sorted(missing)}")
         ordered = cast(pd.DataFrame, frame.loc[:, RECORD_COLUMNS].copy())
-        if migrated or list(frame.columns) != RECORD_COLUMNS:
-            cls._atomic_write(ordered, path)
-        return ordered
+        needs_rewrite = migrated or list(frame.columns) != RECORD_COLUMNS
+        return ordered, needs_rewrite
+
+    def migrate_records_sync(self) -> None:
+        """Upgrade the on-disk records schema once, on the write path.
+
+        Call this at startup. Reads stay side-effect free; only this explicit
+        step rewrites the file, and only when the schema actually changed.
+        """
+        with self._sync_lock:
+            if not self.records_path.exists():
+                return
+            frame = self._read_existing(self.records_path)
+            ordered, needs_rewrite = self._normalize_records(frame, self.records_path)
+            if needs_rewrite:
+                self._atomic_write(ordered, self.records_path)
 
     @staticmethod
     def _record_from_row(row: Mapping[str, object]) -> IncomeRecord:
@@ -221,7 +241,8 @@ class CsvRecordsRepository:
         if not self.records_path.exists():
             return pd.DataFrame(columns=RECORD_COLUMNS)
         frame = self._read_existing(self.records_path)
-        return self._migrate_records(frame, self.records_path)
+        ordered, _ = self._normalize_records(frame, self.records_path)
+        return ordered
 
     def read_records_sync(self) -> pd.DataFrame:
         with self._sync_lock:

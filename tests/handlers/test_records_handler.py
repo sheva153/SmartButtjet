@@ -13,6 +13,7 @@ from income_stats.config import AppConfig, PermissionsConfig
 from income_stats.handlers import routers
 from income_stats.handlers.records_handler import (
     confirm_delete_callback,
+    edit_callback,
     edit_value_handler,
     handle_menu_during_interaction,
     notes_callback,
@@ -188,6 +189,59 @@ async def test_confirm_delete_rechecks_permission() -> None:
 
     service.delete.assert_not_awaited()
     query.answer.assert_awaited_once_with("Недостатньо прав.", show_alert=True)
+
+
+@pytest.mark.asyncio
+async def test_edit_denied_when_not_author_and_editing_locked_down() -> None:
+    query = make_query(user_id=8)
+    query.message.bot = None  # is_telegram_admin fails closed without an API call
+    record = make_record(user_id=7)
+    service = SimpleNamespace(
+        get_record=AsyncMock(return_value=record),
+        acquire_edit=Mock(),
+    )
+    state = SimpleNamespace(set_state=AsyncMock(), set_data=AsyncMock())
+    config = AppConfig(
+        permissions=PermissionsConfig(everyone_can_edit=False),
+    )
+
+    await edit_callback(
+        cast(CallbackQuery, query),
+        RecordAction(action="edit", record_id=record.id, value="amount"),
+        cast(FSMContext, state),
+        cast(RecordsService, service),
+        config,
+    )
+
+    service.acquire_edit.assert_not_called()
+    state.set_state.assert_not_awaited()
+    query.answer.assert_awaited_once_with(
+        "Редагувати може лише автор запису або адміністратор.",
+        show_alert=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_allowed_for_non_author_when_everyone_can_edit() -> None:
+    query = make_query(user_id=8)
+    record = make_record(user_id=7)
+    service = SimpleNamespace(
+        get_record=AsyncMock(return_value=record),
+        acquire_edit=Mock(return_value=True),
+    )
+    state = SimpleNamespace(set_state=AsyncMock(), set_data=AsyncMock())
+    config = AppConfig()  # everyone_can_edit defaults to True
+
+    await edit_callback(
+        cast(CallbackQuery, query),
+        RecordAction(action="edit", record_id=record.id, value="amount"),
+        cast(FSMContext, state),
+        cast(RecordsService, service),
+        config,
+    )
+
+    service.acquire_edit.assert_called_once_with(record.id, 8)
+    state.set_state.assert_awaited_once()
 
 
 @pytest.mark.asyncio
