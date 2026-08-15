@@ -5,6 +5,7 @@ from typing import cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -215,6 +216,35 @@ async def test_confirm_delete_clears_keyboard_after_success() -> None:
 
     service.delete.assert_awaited_once_with(record.id)
     query.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_ignores_uneditable_message() -> None:
+    query = make_query(user_id=7)
+    query.message.edit_reply_markup = AsyncMock(
+        side_effect=TelegramBadRequest(method=Mock(), message="message can't be edited")
+    )
+    record = make_record(user_id=7)
+    service = SimpleNamespace(
+        get_record=AsyncMock(return_value=record),
+        delete=AsyncMock(return_value=True),
+    )
+    config = AppConfig(
+        permissions=PermissionsConfig(
+            author_can_delete=True,
+            admin_can_delete=False,
+        )
+    )
+
+    # A message too old to edit must not turn a successful delete into an error.
+    await confirm_delete_callback(
+        cast(CallbackQuery, query),
+        RecordAction(action="confirm_delete", record_id=record.id),
+        cast(RecordsService, service),
+        config,
+    )
+
+    query.answer.assert_awaited_once_with("Запис видалено.", show_alert=True)
 
 
 @pytest.mark.asyncio

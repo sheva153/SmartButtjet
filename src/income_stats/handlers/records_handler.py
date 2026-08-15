@@ -1,8 +1,10 @@
 """Thin record browsing and FSM edit handlers."""
 
+from contextlib import suppress
 from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -350,8 +352,8 @@ async def confirm_delete_callback(
         "Запис видалено." if deleted else "Запис уже видалено.", show_alert=True
     )
     # Drop the inline keyboard so the now-deleted record has no live buttons to
-    # tap (each would only round-trip to a "record not found" reply).
-    if isinstance(query.message, Message):
+    # tap. The record is already gone, so ignore a message too old to edit.
+    with suppress(TelegramBadRequest):
         await query.message.edit_reply_markup(reply_markup=None)
 
 
