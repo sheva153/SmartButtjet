@@ -4,12 +4,14 @@ from typing import cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
+from income_stats.bot.ui import ChartPeriod
 from income_stats.config import AppConfig
 from income_stats.handlers.analytics_handler import (
     analytics_router,
     chart_handler,
+    chart_period_callback,
     export_handler,
     send_chart,
     stats_handler,
@@ -119,29 +121,64 @@ async def test_stats_audits_requesting_user(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_chart_audits_requesting_user(
-    tmp_path: Path,
+async def test_chart_handler_shows_period_picker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bound_logger = Mock()
     bind = Mock(return_value=bound_logger)
     monkeypatch.setattr("income_stats.handlers.analytics_handler.logger.bind", bind)
-    html = tmp_path / "chart.html"
-    html.write_text("html")
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=7),
         chat=SimpleNamespace(id=-100),
         answer=AsyncMock(),
-        answer_document=AsyncMock(),
-    )
-    service = SimpleNamespace(
-        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(None, html))
     )
 
-    await chart_handler(cast(Message, message), cast(AnalyticsService, service))
+    await chart_handler(cast(Message, message))
 
     bind.assert_called_once_with(chat_id=-100, user_id=7)
-    bound_logger.info.assert_called_once_with("Chart requested")
+    bound_logger.info.assert_called_once_with("Chart period requested")
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args is not None
+    assert message.answer.await_args.kwargs.get("reply_markup") is not None
+
+
+@pytest.mark.asyncio
+async def test_chart_period_callback_builds_and_sends(tmp_path: Path) -> None:
+    png = tmp_path / "chart.png"
+    png.write_bytes(b"\x89PNG")
+    query_message = Mock(spec=Message)
+    query_message.chat = SimpleNamespace(id=-100)
+    query_message.answer_photo = AsyncMock()
+    query_message.answer_document = AsyncMock()
+    query_message.answer = AsyncMock()
+    query = SimpleNamespace(message=query_message, answer=AsyncMock())
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(png, None))
+    )
+
+    await chart_period_callback(
+        cast(CallbackQuery, query),
+        ChartPeriod(period="week"),
+        cast(AnalyticsService, service),
+    )
+
+    service.build_chart_artifacts.assert_awaited_once_with(-100, "week")
+    query_message.answer_photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chart_period_callback_rejects_unknown_period() -> None:
+    query_message = Mock(spec=Message)
+    query = SimpleNamespace(message=query_message, answer=AsyncMock())
+    service = SimpleNamespace(build_chart_artifacts=AsyncMock())
+
+    await chart_period_callback(
+        cast(CallbackQuery, query),
+        ChartPeriod(period="decade"),
+        cast(AnalyticsService, service),
+    )
+
+    service.build_chart_artifacts.assert_not_awaited()
 
 
 @pytest.mark.asyncio

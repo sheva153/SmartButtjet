@@ -1,12 +1,9 @@
-import platform
 import subprocess
 import sys
 import zipfile
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-
-import pytest
 
 from income_stats.config import load_config
 from income_stats.models import IncomeRecord, RecordNote
@@ -186,13 +183,7 @@ async def test_chart_generates_self_contained_html(tmp_path: Path) -> None:
             artifacts.html.unlink(missing_ok=True)
 
 
-async def test_chart_generates_png_with_kaleido(tmp_path: Path) -> None:
-    if sys.platform.startswith("linux") and platform.machine().lower() not in {
-        "amd64",
-        "x86_64",
-    }:
-        pytest.skip("plotly_get_chrome provides an x86-64 Linux Chrome bundle")
-
+async def test_chart_generates_png_report(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     config = load_config(config_path)
     config.analytics.interactive_html = False
@@ -205,7 +196,9 @@ async def test_chart_generates_png_with_kaleido(tmp_path: Path) -> None:
         fun_summary=config.fun_summary,
     )
 
-    artifacts = await service.build_chart_artifacts(-100, "all")
+    artifacts = await service.build_chart_artifacts(
+        -100, "month", today=date(2026, 8, 15)
+    )
 
     try:
         assert artifacts.html is None

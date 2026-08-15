@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-Period = Literal["today", "week", "month", "all"]
+Period = Literal["today", "week", "month", "year", "all"]
 
 
 def normalize_label(value: str) -> str:

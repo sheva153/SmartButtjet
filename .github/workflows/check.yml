@@ -29,9 +29,6 @@ jobs:
       - name: Install project
         run: uv sync --locked --dev
 
-      - name: Install Chrome for Plotly
-        run: just setup-chart
-
       - name: Run quality checks
         run: just check
 

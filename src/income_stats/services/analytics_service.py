@@ -24,6 +24,7 @@ from loguru import logger
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
 from income_stats.repositories import RecordsRepository
+from income_stats.services.report_chart import CHART_PERIODS, render_report_png
 
 _MAX_EXACT_CHART_AMOUNT = Decimal(2**45 - 1)
 
@@ -89,6 +90,13 @@ class AnalyticsService:
                             == (current_date.year, current_date.month)
                         )
                     )
+                ].copy(),
+            )
+        if period == "year":
+            return cast(
+                pd.DataFrame,
+                frame.loc[
+                    dates.map(lambda value: value.year == current_date.year)
                 ].copy(),
             )
         raise ValueError(f"Unsupported analytics period: {period}")
@@ -158,11 +166,9 @@ class AnalyticsService:
         *,
         today: date | None = None,
     ) -> ChartArtifacts:
-        frame = await self.frame(
-            chat_id,
-            period or self._config.default_period,
-            today=today,
-        )
+        resolved_period = period or self._config.default_period
+        reference = today or datetime.now(ZoneInfo(self._timezone)).date()
+        frame = await self.frame(chat_id, resolved_period, today=reference)
         if frame.empty:
             raise ValueError("No data for chart")
         if not self._config.static_preview and not self._config.interactive_html:
@@ -173,6 +179,8 @@ class AnalyticsService:
                 frame,
                 self.artifact_directory,
                 self._config,
+                resolved_period,
+                reference,
             ),
             cancelled_result_cleanup=_remove_chart_artifacts,
         )
@@ -240,6 +248,8 @@ def _write_chart_artifacts(
     frame: pd.DataFrame,
     artifact_directory: Path,
     config: AnalyticsConfig,
+    period: Period,
+    reference: date,
 ) -> ChartArtifacts:
     daily = cast(
         pd.DataFrame,
@@ -252,21 +262,11 @@ def _write_chart_artifacts(
     if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in daily["amount"]):
         raise ValueError("Chart amount exceeds exact display range")
     daily["amount"] = daily["amount"].map(float)
-    figure = px.bar(
-        daily,
-        x="day",
-        y="amount",
-        color="currency",
-        facet_row="currency",
-        barmode="group",
-        title="Доходи за днями",
-        labels={"day": "Дата", "amount": "Сума", "currency": "Валюта"},
-    )
     artifact_directory.mkdir(parents=True, exist_ok=True)
     token = uuid4().hex
     png = (
         artifact_directory / f"income-chart-{token}.png"
-        if config.static_preview
+        if config.static_preview and period in CHART_PERIODS
         else None
     )
     html = (
@@ -277,29 +277,26 @@ def _write_chart_artifacts(
     completed = False
     try:
         if html is not None:
-            figure.write_html(
-                html,
-                include_plotlyjs=True,
-                full_html=True,
+            figure = px.bar(
+                daily,
+                x="day",
+                y="amount",
+                color="currency",
+                facet_row="currency",
+                barmode="group",
+                title="Доходи за днями",
+                labels={"day": "Дата", "amount": "Сума", "currency": "Валюта"},
             )
+            figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
-                figure.write_image(
-                    png,
-                    format="png",
-                    width=1200,
-                    height=700,
-                    scale=2,
-                )
+                render_report_png(frame, period, reference, png)
             except Exception as error:
                 if html is None:
                     raise
                 png.unlink(missing_ok=True)
                 png = None
-                logger.warning(
-                    "PNG chart preview unavailable; using HTML fallback: {}",
-                    error,
-                )
+                logger.warning("PNG report unavailable; using HTML only: {}", error)
         completed = True
     finally:
         if not completed:

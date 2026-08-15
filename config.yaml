@@ -33,9 +33,9 @@ permissions:
 
 analytics:
   default_period: month
-  # PNG preview needs a native Chrome build; this server is ARM64 while the
-  # downloaded Kaleido browser is x86-64. Keep the portable HTML chart enabled.
-  static_preview: false
+  # The PNG report photo is drawn with matplotlib (no browser needed), so it
+  # works on this ARM64 server. The portable HTML chart is sent alongside it.
+  static_preview: true
   interactive_html: true
 
 fun_summary:

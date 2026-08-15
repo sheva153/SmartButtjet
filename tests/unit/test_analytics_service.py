@@ -196,6 +196,9 @@ async def test_period_and_chat_filtering(tmp_path: Path) -> None:
     today = await service.frame(-100, "today", today=date(2026, 7, 29))
     assert list(today["id"]) == ["today"]
 
+    year = await service.frame(-100, "year", today=date(2026, 7, 29))
+    assert sorted(year["id"]) == ["old", "today"]
+
 
 async def test_invalid_runtime_period_is_rejected(
     analytics_service: AnalyticsService,
@@ -206,17 +209,15 @@ async def test_invalid_runtime_period_is_rejected(
 
 async def test_chart_builds_png_and_self_contained_html(
     analytics_service: AnalyticsService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_write_image(self: object, path: Path, **kwargs: object) -> None:
-        Path(path).write_bytes(b"png")
+    first = await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
+    second = await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
 
-    monkeypatch.setattr("plotly.graph_objects.Figure.write_image", fake_write_image)
-
-    first = await analytics_service.build_chart_artifacts(-100, "all")
-    second = await analytics_service.build_chart_artifacts(-100, "all")
-
-    assert first.png is not None and first.png.read_bytes() == b"png"
+    assert first.png is not None and first.png.read_bytes().startswith(b"\x89PNG")
     assert first.html is not None and first.html.exists()
     assert "plotly" in first.html.read_text(encoding="utf-8").casefold()
     assert first != second
@@ -226,12 +227,14 @@ async def test_chart_failure_falls_back_to_html(
     analytics_service: AnalyticsService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_write_image(self: object, path: Path, **kwargs: object) -> None:
-        raise RuntimeError("no browser")
+    def fail_render(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("render failed")
 
-    monkeypatch.setattr("plotly.graph_objects.Figure.write_image", fail_write_image)
+    monkeypatch.setattr(analytics_module, "render_report_png", fail_render)
 
-    artifacts = await analytics_service.build_chart_artifacts(-100, "all")
+    artifacts = await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
 
     assert artifacts.png is None
     assert artifacts.html is not None and artifacts.html.exists()
