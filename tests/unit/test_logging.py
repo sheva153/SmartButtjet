@@ -163,7 +163,7 @@ async def test_run_bot_registers_commands_polls_and_closes_session(
         "  123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi  ",
     )
     monkeypatch.setenv("LOG_LEVEL", "WARNING")
-    session = SimpleNamespace(close=AsyncMock())
+    session = SimpleNamespace(close=AsyncMock(), middleware=Mock())
     bot = SimpleNamespace(session=session, set_my_commands=AsyncMock())
     bot_factory = Mock(return_value=bot)
     dispatcher = SimpleNamespace(
@@ -191,6 +191,7 @@ async def test_run_bot_registers_commands_polls_and_closes_session(
         token="123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
     )
     bot.set_my_commands.assert_awaited_once_with(list(BOT_COMMANDS))
+    session.middleware.assert_called_once()
     dispatcher_factory.assert_called_once_with(config)
     dispatcher.start_polling.assert_awaited_once_with(
         bot,

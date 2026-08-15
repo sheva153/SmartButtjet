@@ -192,6 +192,32 @@ async def test_confirm_delete_rechecks_permission() -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirm_delete_clears_keyboard_after_success() -> None:
+    query = make_query(user_id=7)
+    record = make_record(user_id=7)
+    service = SimpleNamespace(
+        get_record=AsyncMock(return_value=record),
+        delete=AsyncMock(return_value=True),
+    )
+    config = AppConfig(
+        permissions=PermissionsConfig(
+            author_can_delete=True,
+            admin_can_delete=False,
+        )
+    )
+
+    await confirm_delete_callback(
+        cast(CallbackQuery, query),
+        RecordAction(action="confirm_delete", record_id=record.id),
+        cast(RecordsService, service),
+        config,
+    )
+
+    service.delete.assert_awaited_once_with(record.id)
+    query.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
+
+
+@pytest.mark.asyncio
 async def test_edit_denied_when_not_author_and_editing_locked_down() -> None:
     query = make_query(user_id=8)
     query.message.bot = None  # is_telegram_admin fails closed without an API call

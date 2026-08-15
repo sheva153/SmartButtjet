@@ -349,6 +349,10 @@ async def confirm_delete_callback(
     await query.answer(
         "Запис видалено." if deleted else "Запис уже видалено.", show_alert=True
     )
+    # Drop the inline keyboard so the now-deleted record has no live buttons to
+    # tap (each would only round-trip to a "record not found" reply).
+    if isinstance(query.message, Message):
+        await query.message.edit_reply_markup(reply_markup=None)
 
 
 @records_router.callback_query(RecordAction.filter(F.action == "delete"))

@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from loguru import logger
 
+from income_stats.bot.notifications import SilentNotifications
 from income_stats.config import AppConfig, Secrets
 from income_stats.handlers import routers
 from income_stats.repositories import CsvRecordsRepository
@@ -69,6 +70,7 @@ async def run_bot(config: AppConfig) -> None:
 
     configure_logging(secrets.log_level)
     bot = Bot(token=token)
+    bot.session.middleware(SilentNotifications())
     try:
         await bot.set_my_commands(list(BOT_COMMANDS))
         logger.info("Income bot started")
