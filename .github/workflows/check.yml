@@ -1,0 +1,39 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Install project
+        run: uv sync --locked --dev
+
+      - name: Install Chrome for Plotly
+        run: just setup-chart
+
+      - name: Run quality checks
+        run: just check
+
+      - name: Run CLI smoke tests
+        run: just smoke

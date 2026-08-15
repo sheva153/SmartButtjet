@@ -1,2 +1,172 @@
-# SmartButtjet
- SmartButtJet 🚀 Drop a message and watch your income become records, editable notes, stats, and charts. Pause the money radar when needed, then fire it back up. It also calculates your wealth in burgers, coffee, and suspicious fractions of matchboxes. Finance, but with more thrust and more butt. 🍑
+# Income Stats Bot
+
+Telegram-бот для обліку доходів у групі. Він локально, без AI та платних API,
+витягує суми з тексту, визначає категорії й теги, зберігає CSV-записи та
+будує статистику.
+
+Наприклад, повідомлення `отримав 500 зарплата на картку` одразу створить
+дохід `500 UAH` з категорією `salary` і тегом `card`. Спеціальний префікс або
+підтвердження не потрібні.
+
+## Як працює розпізнавання
+
+- майже кожне число в повідомленні розглядається як дохід;
+- час, телефон, IP-адреса, дата й номер будинку/квартири не стають сумою;
+- дата на кшталт `вчора` або `20.07.2026` використовується як дата доходу;
+- підтримуються UAH, USD та EUR, UAH є валютою за замовчуванням;
+- одне повідомлення може містити кілька сум;
+- категорій і тегів також може бути декілька;
+- aliases налаштовуються у `config.yaml`, наприклад `зарплата`, `зп`,
+  `картка`, `борг`;
+- помилки можна виправити через inline-редагування після запису.
+
+Приклади захищених чисел:
+
+```text
+зустріч о 18:30                  → доходу немає
+телефон +380 67 123 45 67       → доходу немає
+вул. Хрещатик, 22               → доходу немає
+отримав 500 о 18:30             → записується лише 500
+зарплата 2000, вул. Лісова 7    → записується лише 2000
+```
+
+Parser детермінований: текст повідомлень не надсилається зовнішнім сервісам.
+
+## Можливості
+
+- автоматичний запис доходу без confirm-flow;
+- довільні та одночасні категорії/теги;
+- редагування суми, валюти, категорій, тегів, опису й дати;
+- нотатки, пагінація та контроль одночасного редагування;
+- статистика за сьогодні, тиждень, місяць або весь час;
+- `/chart` надсилає статичне PNG-прев’ю та інтерактивний HTML;
+- fun baskets: після запису доходу бот додає жартівливу фразу та приблизний
+  «кошик» — на що вистачить суми (`🍕 5 піц`, `🍔 10 бургерів`); налаштовується
+  у секції `fun_summary` `config.yaml`;
+- усі повідомлення бота надсилаються без звуку (silent), щоб бот не пінгував
+  групу на кожен записаний дохід;
+- admin-only ZIP-експорт із records і notes;
+- атомарні, chat-scoped CSV-операції;
+- асинхронний aiogram polling.
+
+## Архітектура
+
+Це простий модульний моноліт. У корені залишається лише `main.py`, а код
+згруповано за відповідальністю:
+
+```text
+src/income_stats/
+├── bot/            # composition root та Telegram UI
+├── config/         # typed YAML/.env settings
+├── handlers/       # aiogram handlers
+├── models/         # domain models
+├── parsers/        # локальний income parser
+├── repositories/   # CSV persistence
+├── services/       # records, analytics, income, admin use cases
+└── utils/          # logging та temporary files
+```
+
+`handlers` відповідають за Telegram, `services` — за правила програми,
+`repositories` — за зберігання. Один repository інжектується в усі services.
+
+## Налаштування
+
+Потрібні Python 3.12–3.13, `uv` і `just`.
+
+```bash
+cp .env.example .env
+just setup
+just setup-chart
+```
+
+У `.env` додай токен BotFather:
+
+```env
+TELEGRAM_BOT_TOKEN=123456:your-token
+LOG_LEVEL=INFO
+```
+
+Токен і `.env` не можна комітити. У `config.yaml` вкажи дозволені чати та
+адміністраторів:
+
+```yaml
+bot:
+  timezone: Europe/Kyiv
+  allowed_chat_ids:
+    - -1001234567890
+  admin_user_ids:
+    - 123456789
+```
+
+Порожній `allowed_chat_ids` дозволяє всі чати й підходить лише для локальної
+розробки. У BotFather вимкни Privacy Mode: `/setprivacy` → бот → `Disable`,
+щоб бот бачив звичайні повідомлення групи.
+
+Категорії, теги та їх aliases редагуються у `income` секції `config.yaml`.
+Кожна знайдена canonical label зберігається один раз, а якщо категорію не
+визначено — використовується `other`.
+
+## Запуск і команди
+
+```bash
+just check
+just smoke
+just run
+```
+
+Telegram-команди:
+
+- `/start`, `/help` — меню та довідка;
+- `/records` — останні записи;
+- `/stats` — статистика;
+- `/chart` — PNG та HTML-діаграма;
+- `/export` — ZIP-експорт для адміністратора;
+- `/status`, `/turn_on`, `/turn_off` — керування записом доходів;
+- `/cancel` — скасування поточної взаємодії.
+
+Перевірити parser без Telegram:
+
+```bash
+just parse "Отримав 1 500 грн зарплата на картку"
+just parse "Earned $250 and €100 freelance"
+```
+
+CLI analytics/export завжди потребують scope конкретного чату:
+
+```bash
+just analytics -1001234567890 month
+just export -1001234567890
+```
+
+## Дані та логи
+
+За замовчуванням бот створює:
+
+```text
+data/records.csv
+data/record_notes.csv
+data/chat_settings.csv
+data/exports/
+logs/bot.log
+```
+
+CSV підходить для MVP і невеликої групи. Записи із різних chat ID не
+змішуються в UI, analytics або export. Логи ротуються після 10 MB, зберігаються
+14 днів і стискаються в ZIP; токен, повні тексти повідомлень та нотатки не
+логуються.
+
+## Розробка
+
+```bash
+just format
+just lint
+just typecheck
+just test
+just test parser
+just cov
+just check
+```
+
+`just check` запускає Ruff formatting/check, Pyright і весь pytest suite.
+Зміни виконуються у feature-гілках і доставляються через pull request; прямий
+push у `main` або `master` заборонений.

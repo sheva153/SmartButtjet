@@ -1,0 +1,15 @@
+.env
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+data/*.csv
+data/exports/
+logs/
+*.html
+*.png
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.pyright/
