@@ -17,9 +17,8 @@ from income_stats.bot.ui import (
 )
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
-from income_stats.models import Period
+from income_stats.models import CHART_PERIODS, Period
 from income_stats.services import AnalyticsService
-from income_stats.services.report_chart import CHART_PERIODS
 from income_stats.utils import temporary_artifacts
 
 analytics_router = Router(name="analytics")

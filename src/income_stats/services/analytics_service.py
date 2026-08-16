@@ -22,13 +22,15 @@ import plotly.express as px
 from loguru import logger
 
 from income_stats.config import AnalyticsConfig, StorageConfig
-from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
-from income_stats.repositories import RecordsRepository
-from income_stats.services.report_chart import (
+from income_stats.models import (
     CHART_PERIODS,
-    PERIOD_TITLES,
-    render_report_png,
+    FunSummaryConfig,
+    IncomeRecord,
+    Period,
+    RecordNote,
 )
+from income_stats.repositories import RecordsRepository
+from income_stats.services.report_chart import PERIOD_TITLES, render_report_png
 
 _MAX_EXACT_CHART_AMOUNT = Decimal(2**45 - 1)
 
@@ -255,17 +257,8 @@ def _write_chart_artifacts(
     period: Period,
     reference: date,
 ) -> ChartArtifacts:
-    daily = cast(
-        pd.DataFrame,
-        (
-            frame.assign(day=frame["income_date"])
-            .groupby(["day", "currency"], as_index=False)["amount"]
-            .agg(lambda values: sum(values, start=Decimal()))
-        ),
-    )
-    if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in daily["amount"]):
+    if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in frame["amount"]):
         raise ValueError("Chart amount exceeds exact display range")
-    daily["amount"] = daily["amount"].map(float)
     artifact_directory.mkdir(parents=True, exist_ok=True)
     token = uuid4().hex
     png = (
@@ -281,6 +274,17 @@ def _write_chart_artifacts(
     completed = False
     try:
         if html is not None:
+            # The interactive HTML is a per-day breakdown of the same period the
+            # PNG summarises; its daily groupby is only needed here.
+            daily = cast(
+                pd.DataFrame,
+                (
+                    frame.assign(day=frame["income_date"])
+                    .groupby(["day", "currency"], as_index=False)["amount"]
+                    .agg(lambda values: sum(values, start=Decimal()))
+                ),
+            )
+            daily["amount"] = daily["amount"].map(float)
             figure = px.bar(
                 daily,
                 x="day",

@@ -29,7 +29,6 @@ PERIOD_TITLES = {
     "month": "Звіт за місяць",
     "year": "Звіт за рік",
 }
-CHART_PERIODS: tuple[Period, ...] = ("week", "month", "year")
 
 
 def _period_buckets(
