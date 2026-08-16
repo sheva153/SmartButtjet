@@ -8,6 +8,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import get_args
 from zoneinfo import ZoneInfo
 
 from income_stats.bot.application import run_bot
@@ -39,7 +40,7 @@ def _parser() -> argparse.ArgumentParser:
     analytics.add_argument("--chat-id", type=int, required=True)
     analytics.add_argument(
         "--period",
-        choices=("today", "week", "month", "all"),
+        choices=get_args(Period),
         default=None,
     )
 
