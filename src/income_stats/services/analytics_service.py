@@ -24,7 +24,11 @@ from loguru import logger
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import FunSummaryConfig, IncomeRecord, Period, RecordNote
 from income_stats.repositories import RecordsRepository
-from income_stats.services.report_chart import CHART_PERIODS, render_report_png
+from income_stats.services.report_chart import (
+    CHART_PERIODS,
+    PERIOD_TITLES,
+    render_report_png,
+)
 
 _MAX_EXACT_CHART_AMOUNT = Decimal(2**45 - 1)
 
@@ -284,7 +288,7 @@ def _write_chart_artifacts(
                 color="currency",
                 facet_row="currency",
                 barmode="group",
-                title="Доходи за днями",
+                title=f"{PERIOD_TITLES.get(period, 'Доходи')} · за днями",
                 labels={"day": "Дата", "amount": "Сума", "currency": "Валюта"},
             )
             figure.write_html(html, include_plotlyjs=True, full_html=True)

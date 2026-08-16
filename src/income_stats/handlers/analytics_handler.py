@@ -93,6 +93,9 @@ async def chart_period_callback(
         await send_chart(query.message, analytics_service, period)
     except ValueError:
         await query.message.answer("Немає даних для діаграми.")
+    except Exception:
+        logger.bind(chat_id=query.message.chat.id).exception("Chart build failed")
+        await query.message.answer("Не вдалося побудувати діаграму.")
 
 
 @analytics_router.message(Command("export"))

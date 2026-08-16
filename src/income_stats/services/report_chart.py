@@ -24,7 +24,7 @@ _MONTH_LABELS = (
     "Січ", "Лют", "Бер", "Кві", "Тра", "Чер",
     "Лип", "Сер", "Вер", "Жов", "Лис", "Гру",
 )  # fmt: skip
-_PERIOD_TITLES = {
+PERIOD_TITLES = {
     "week": "Звіт за тиждень",
     "month": "Звіт за місяць",
     "year": "Звіт за рік",
@@ -133,7 +133,7 @@ def render_report_png(
     totals = " · ".join(
         f"{_format_amount(sum(series[currency]))} {currency}" for currency in currencies
     )
-    axes.set_title(f"{_PERIOD_TITLES[period]}\nРазом: {totals or '—'}")
+    axes.set_title(f"{PERIOD_TITLES[period]}\nРазом: {totals or '—'}")
     if len(currencies) > 1:
         axes.legend(title="Валюта")
     figure.tight_layout()

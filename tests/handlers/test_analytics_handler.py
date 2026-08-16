@@ -167,6 +167,25 @@ async def test_chart_period_callback_builds_and_sends(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chart_period_callback_reports_build_failure() -> None:
+    query_message = Mock(spec=Message)
+    query_message.chat = SimpleNamespace(id=-100)
+    query_message.answer = AsyncMock()
+    query = SimpleNamespace(message=query_message, answer=AsyncMock())
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(side_effect=RuntimeError("render boom"))
+    )
+
+    await chart_period_callback(
+        cast(CallbackQuery, query),
+        ChartPeriod(period="year"),
+        cast(AnalyticsService, service),
+    )
+
+    query_message.answer.assert_awaited_once_with("Не вдалося побудувати діаграму.")
+
+
+@pytest.mark.asyncio
 async def test_chart_period_callback_rejects_unknown_period() -> None:
     query_message = Mock(spec=Message)
     query = SimpleNamespace(message=query_message, answer=AsyncMock())

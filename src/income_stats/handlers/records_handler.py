@@ -19,13 +19,13 @@ from income_stats.bot.ui import (
     MENU_RECORDS,
     EditState,
     RecordAction,
+    chart_period_keyboard,
     format_record,
     record_keyboard,
     records_keyboard,
 )
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
-from income_stats.handlers.analytics_handler import send_chart
 from income_stats.models import IncomeRecord
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services import AnalyticsService, RecordField, RecordsService
@@ -102,11 +102,10 @@ async def handle_menu_during_interaction(
         await send_records_page(message, records_service, 0)
     elif message.text == MENU_ANALYTICS and analytics_service is not None:
         await message.answer(await analytics_service.summary(message.chat.id))
-    elif message.text == MENU_CHART and analytics_service is not None:
-        try:
-            await send_chart(message, analytics_service)
-        except ValueError:
-            await message.answer("Немає даних для діаграми.")
+    elif message.text == MENU_CHART:
+        await message.answer(
+            "Оберіть період для діаграми:", reply_markup=chart_period_keyboard()
+        )
     elif message.text == MENU_HELP:
         await message.answer("Дію скасовано. Використай /help.")
     else:
