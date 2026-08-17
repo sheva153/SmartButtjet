@@ -13,6 +13,7 @@ from income_stats.repositories import CsvRecordsRepository
 from income_stats.services import (
     AdminService,
     AnalyticsService,
+    GoalService,
     IncomeService,
     RecordsService,
 )
@@ -24,6 +25,7 @@ BOT_COMMANDS = (
     BotCommand(command="records", description="Показати останні записи"),
     BotCommand(command="stats", description="Показати статистику"),
     BotCommand(command="chart", description="Створити діаграму"),
+    BotCommand(command="goal", description="Задати або показати ціль доходу"),
     BotCommand(command="export", description="Експортувати записи"),
     BotCommand(command="status", description="Стан запису доходів"),
     BotCommand(command="turn_on", description="Увімкнути запис доходів"),
@@ -41,19 +43,21 @@ def build_dispatcher(config: AppConfig) -> Dispatcher:
         repository.migrate_records_sync()
     except ValueError:
         logger.exception("Records schema migration skipped")
+    analytics_service = AnalyticsService(
+        repository,
+        config.analytics,
+        config.storage,
+        timezone=config.bot.timezone,
+        fun_summary=config.fun_summary,
+    )
     dispatcher = Dispatcher(
         income_service=IncomeService(repository, config.income),
         records_service=RecordsService(
             repository,
             edit_lock_seconds=config.permissions.edit_lock_seconds,
         ),
-        analytics_service=AnalyticsService(
-            repository,
-            config.analytics,
-            config.storage,
-            timezone=config.bot.timezone,
-            fun_summary=config.fun_summary,
-        ),
+        analytics_service=analytics_service,
+        goal_service=GoalService(repository, analytics_service, config.goals),
         admin_service=AdminService(repository),
         app_config=config,
     )

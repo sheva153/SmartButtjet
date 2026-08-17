@@ -42,6 +42,10 @@ def record() -> IncomeRecord:
     )
 
 
+def no_goal_line() -> SimpleNamespace:
+    return SimpleNamespace(after_save_line=AsyncMock(return_value=""))
+
+
 @pytest.mark.asyncio
 async def test_income_handler_captures_and_replies_for_every_record() -> None:
     message = SimpleNamespace(
@@ -55,7 +59,9 @@ async def test_income_handler_captures_and_replies_for_every_record() -> None:
     income = SimpleNamespace(capture=AsyncMock(return_value=[record(), record()]))
     admin = SimpleNamespace(status=AsyncMock(return_value=True))
     analytics = SimpleNamespace(fun_summary=Mock(return_value="fun"))
-    await income_message_handler(message, income, admin, analytics, AppConfig())
+    await income_message_handler(
+        message, income, admin, analytics, AppConfig(), no_goal_line()
+    )
     income.capture.assert_awaited_once()
     assert message.reply.await_count == 2
 
@@ -83,6 +89,7 @@ async def test_income_handler_audits_each_record(
         SimpleNamespace(status=AsyncMock(return_value=True)),
         SimpleNamespace(fun_summary=Mock(return_value="fun")),
         AppConfig(),
+        no_goal_line(),
     )
 
     bind.assert_called_once_with(
@@ -115,6 +122,7 @@ async def test_income_handler_accepts_unhashable_aiogram_awaitables() -> None:
         SimpleNamespace(status=AsyncMock(return_value=True)),
         SimpleNamespace(fun_summary=Mock(return_value="fun")),
         AppConfig(),
+        no_goal_line(),
     )
 
     assert reply.call_count == 2
@@ -139,6 +147,7 @@ async def test_income_handler_never_captures_menu_or_commands() -> None:
             SimpleNamespace(status=AsyncMock()),
             SimpleNamespace(fun_summary=Mock()),
             AppConfig(),
+            no_goal_line(),
         )
     income.capture.assert_not_awaited()
 
@@ -163,7 +172,72 @@ async def test_income_handler_reports_invalid_date() -> None:
         SimpleNamespace(status=AsyncMock(return_value=True)),
         SimpleNamespace(fun_summary=Mock()),
         AppConfig(),
+        no_goal_line(),
     )
 
     message.answer.assert_awaited_once()
     message.reply.assert_not_awaited()
+
+
+def expense_record() -> IncomeRecord:
+    return IncomeRecord(
+        telegram_message_id=1,
+        chat_id=-100,
+        user_id=7,
+        original_text="-500 таксі",
+        amount=Decimal("500"),
+        currency="UAH",
+        income_date=date(2026, 8, 1),
+        updated_by=7,
+        type="expense",
+    )
+
+
+@pytest.mark.asyncio
+async def test_income_reply_appends_goal_line_when_goal_set() -> None:
+    message = SimpleNamespace(
+        text="500 зарплата",
+        from_user=SimpleNamespace(id=7, username="felix", is_bot=False),
+        chat=SimpleNamespace(id=-100),
+        message_id=10,
+        reply=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    income = SimpleNamespace(capture=AsyncMock(return_value=[record()]))
+    admin = SimpleNamespace(status=AsyncMock(return_value=True))
+    analytics = SimpleNamespace(fun_summary=Mock(return_value="fun"))
+    goal_service = SimpleNamespace(
+        after_save_line=AsyncMock(return_value="Так тримати! Ти випереджаєш темп 🚀")
+    )
+
+    await income_message_handler(
+        message, income, admin, analytics, AppConfig(), goal_service
+    )
+
+    body = message.reply.await_args.args[0]
+    assert "Так тримати! Ти випереджаєш темп 🚀" in body
+
+
+@pytest.mark.asyncio
+async def test_expense_reply_has_no_goal_line() -> None:
+    message = SimpleNamespace(
+        text="-500 таксі",
+        from_user=SimpleNamespace(id=7, username="felix", is_bot=False),
+        chat=SimpleNamespace(id=-100),
+        message_id=10,
+        reply=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    income = SimpleNamespace(capture=AsyncMock(return_value=[expense_record()]))
+    admin = SimpleNamespace(status=AsyncMock(return_value=True))
+    analytics = SimpleNamespace(fun_summary=Mock(return_value="fun"))
+    goal_service = SimpleNamespace(
+        after_save_line=AsyncMock(return_value="Так тримати! Ти випереджаєш темп 🚀")
+    )
+
+    await income_message_handler(
+        message, income, admin, analytics, AppConfig(), goal_service
+    )
+
+    body = message.reply.await_args.args[0]
+    assert "Так тримати! Ти випереджаєш темп 🚀" not in body
