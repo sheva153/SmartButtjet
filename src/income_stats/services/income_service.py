@@ -43,6 +43,7 @@ class IncomeService:
                 original_text=text,
                 amount=item.amount,
                 currency=item.currency,
+                type=item.type,
                 categories=item.categories,
                 tags=item.tags,
                 description=item.description,
