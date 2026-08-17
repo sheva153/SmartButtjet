@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import get_args
 from zoneinfo import ZoneInfo
@@ -43,6 +43,8 @@ def _parser() -> argparse.ArgumentParser:
         choices=get_args(Period),
         default=None,
     )
+    analytics.add_argument("--from", dest="date_from", type=str, default=None)
+    analytics.add_argument("--to", dest="date_to", type=str, default=None)
 
     export = commands.add_parser("export", help="Build a scoped CSV export")
     export.add_argument("--chat-id", type=int, required=True)
@@ -83,8 +85,19 @@ def _parse(config: AppConfig, message: str) -> None:
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
-async def _analytics(config: AppConfig, chat_id: int, period: Period | None) -> None:
-    print(await _analytics_service(config).summary(chat_id, period))
+async def _analytics(
+    config: AppConfig,
+    chat_id: int,
+    period: Period | None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> None:
+    date_range = None
+    if date_from and date_to:
+        date_range = (date.fromisoformat(date_from), date.fromisoformat(date_to))
+    print(
+        await _analytics_service(config).summary(chat_id, period, date_range=date_range)
+    )
 
 
 async def _export(config: AppConfig, chat_id: int) -> None:
@@ -104,7 +117,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     elif args.command == "check-storage":
         _check_storage(config)
     elif args.command == "analytics":
-        asyncio.run(_analytics(config, args.chat_id, args.period))
+        asyncio.run(
+            _analytics(config, args.chat_id, args.period, args.date_from, args.date_to)
+        )
     elif args.command == "export":
         asyncio.run(_export(config, args.chat_id))
     return 0

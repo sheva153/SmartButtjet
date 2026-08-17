@@ -76,6 +76,40 @@ def _period_buckets(
     raise ValueError(f"Unsupported report period: {period}")
 
 
+def _range_buckets(
+    start: date, end: date
+) -> tuple[list[str], Callable[[date], int | None]]:
+    """Return x-axis labels and a date→bucket-index mapper for an arbitrary range.
+
+    Buckets by day when the span is at most 62 days, otherwise by month.
+    """
+    span = (end - start).days
+    if span <= 62:
+        labels = [
+            (start + timedelta(days=offset)).strftime("%d.%m")
+            for offset in range(span + 1)
+        ]
+
+        def day_index(value: date) -> int | None:
+            delta = (value - start).days
+            return delta if 0 <= delta <= span else None
+
+        return labels, day_index
+
+    months: list[date] = []
+    cursor = start.replace(day=1)
+    while cursor <= end:
+        months.append(cursor)
+        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+    labels = [month.strftime("%m.%Y") for month in months]
+    lookup = {(month.year, month.month): index for index, month in enumerate(months)}
+
+    def month_index(value: date) -> int | None:
+        return lookup.get((value.year, value.month))
+
+    return labels, month_index
+
+
 def _aggregate(
     frame: pd.DataFrame,
     labels: list[str],
@@ -114,9 +148,15 @@ def render_report_png(
     period: Period,
     reference: date,
     path: Path,
+    date_range: tuple[date, date] | None = None,
 ) -> None:
-    """Draw a period report bar chart with value and time labels to ``path``."""
-    labels, index_of = _period_buckets(period, reference)
+    """Draw a period (or arbitrary date-range) report bar chart to ``path``."""
+    if date_range is not None:
+        labels, index_of = _range_buckets(*date_range)
+        title = f"Звіт {date_range[0]:%d.%m.%Y}–{date_range[1]:%d.%m.%Y}"
+    else:
+        labels, index_of = _period_buckets(period, reference)
+        title = PERIOD_TITLES[period]
     series = _aggregate(frame, labels, index_of)
     currencies = sorted(series)
 
@@ -187,7 +227,7 @@ def render_report_png(
         )
 
     subtitle = " · ".join(_subtitle_part(currency) for currency in currencies)
-    axes.set_title(f"{PERIOD_TITLES[period]}\n{subtitle or '—'}")
+    axes.set_title(f"{title}\n{subtitle or '—'}")
     if currencies:
         axes.legend(title="Валюта")
     figure.tight_layout()

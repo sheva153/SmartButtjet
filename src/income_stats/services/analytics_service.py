@@ -63,6 +63,7 @@ class AnalyticsService:
         period: Period = "all",
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> pd.DataFrame:
         records = await self._repository.list_records(chat_id)
         if not records:
@@ -72,9 +73,14 @@ class AnalyticsService:
             columns=list(IncomeRecord.model_fields),
         )
         current_date = today or datetime.now(ZoneInfo(self._timezone)).date()
+        dates = frame["income_date"]
+        if date_range is not None:
+            start, end = date_range
+            return cast(
+                pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy()
+            )
         if period == "all":
             return frame
-        dates = frame["income_date"]
         if period == "today":
             return cast(pd.DataFrame, frame.loc[dates == current_date].copy())
         if period == "week":
@@ -197,11 +203,13 @@ class AnalyticsService:
         period: Period | None = None,
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> str:
         frame = await self.frame(
             chat_id,
             period or self._config.default_period,
             today=today,
+            date_range=date_range,
         )
         if frame.empty:
             return "Записів ще немає."
@@ -221,10 +229,13 @@ class AnalyticsService:
         period: Period | None = None,
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> ChartArtifacts:
         resolved_period = period or self._config.default_period
         reference = today or datetime.now(ZoneInfo(self._timezone)).date()
-        frame = await self.frame(chat_id, resolved_period, today=reference)
+        frame = await self.frame(
+            chat_id, resolved_period, today=reference, date_range=date_range
+        )
         if frame.empty:
             raise ValueError("No data for chart")
         if not self._config.static_preview and not self._config.interactive_html:
@@ -237,6 +248,7 @@ class AnalyticsService:
                 self._config,
                 resolved_period,
                 reference,
+                date_range,
             ),
             cancelled_result_cleanup=_remove_chart_artifacts,
         )
@@ -306,6 +318,7 @@ def _write_chart_artifacts(
     config: AnalyticsConfig,
     period: Period,
     reference: date,
+    date_range: tuple[date, date] | None = None,
 ) -> ChartArtifacts:
     if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in frame["amount"]):
         raise ValueError("Chart amount exceeds exact display range")
@@ -348,7 +361,7 @@ def _write_chart_artifacts(
             figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
-                render_report_png(frame, period, reference, png)
+                render_report_png(frame, period, reference, png, date_range)
             except Exception as error:
                 if html is None:
                     raise

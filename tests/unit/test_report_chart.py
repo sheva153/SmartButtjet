@@ -13,6 +13,7 @@ from income_stats.services.report_chart import (
     _aggregate,
     _legend_label,
     _period_buckets,
+    _range_buckets,
     render_report_png,
 )
 
@@ -191,3 +192,30 @@ def test_render_report_png_writes_file(tmp_path: Path) -> None:
     path = tmp_path / "chart.png"
     render_report_png(_week_frame_mixed(), "week", date(2026, 8, 17), path)
     assert path.exists() and path.stat().st_size > 0
+
+
+def test_range_buckets_by_day_for_short_span() -> None:
+    labels, index_of = _range_buckets(date(2026, 3, 1), date(2026, 3, 5))
+    assert labels == ["01.03", "02.03", "03.03", "04.03", "05.03"]
+    assert index_of(date(2026, 3, 3)) == 2
+    assert index_of(date(2026, 2, 28)) is None
+    assert index_of(date(2026, 3, 6)) is None
+
+
+def test_range_buckets_by_month_for_long_span() -> None:
+    labels, index_of = _range_buckets(date(2025, 1, 15), date(2025, 6, 3))
+    assert labels == ["01.2025", "02.2025", "03.2025", "04.2025", "05.2025", "06.2025"]
+    assert index_of(date(2025, 3, 20)) == 2
+    assert index_of(date(2024, 12, 31)) is None
+
+
+def test_render_report_png_uses_range_title(tmp_path: Path) -> None:
+    path = tmp_path / "range.png"
+    render_report_png(
+        _week_frame_mixed(),
+        "week",
+        date(2026, 8, 17),
+        path,
+        date_range=(date(2026, 8, 17), date(2026, 8, 18)),
+    )
+    assert path.read_bytes().startswith(b"\x89PNG")
