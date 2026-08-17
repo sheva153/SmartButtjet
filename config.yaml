@@ -8,6 +8,7 @@ storage:
   notes_file: data/record_notes.csv
   chat_settings_file: data/chat_settings.csv
   export_directory: data/exports
+  goals_file: data/goals.csv
 
 income:
   default_currency: UAH
@@ -24,6 +25,7 @@ income:
     card: [картка, карта, на карту, на картку, card]
     cash: [готівка, готівкою, кеш, cash]
   allow_custom_categories: true
+  expense_markers: [витрата, витратив, витратила, мінус]
 
 permissions:
   everyone_can_edit: true
@@ -37,6 +39,19 @@ analytics:
   # works on this ARM64 server. The portable HTML chart is sent alongside it.
   static_preview: true
   interactive_html: true
+
+goals:
+  enabled: true
+  after_save_line: true
+  ahead_phrases:
+    - "Так тримати! Ти випереджаєш темп 🚀"
+    - "Красиво йдеш — ціль уже близько ✨"
+  behind_phrases:
+    - "Час пришвидшитись — ще все встигаєш 💪"
+    - "Трохи відстаєш, але це поправно 🔧"
+  reached_phrases:
+    - "Ціль досягнута! Ти неймовірна 🎉"
+    - "Місячна планка взята — вітаю! 🏆"
 
 fun_summary:
   enabled: true

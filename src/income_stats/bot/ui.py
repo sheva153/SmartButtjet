@@ -28,13 +28,17 @@ class ChartPeriod(CallbackData, prefix="chart"):
 
 def chart_period_keyboard():
     builder = InlineKeyboardBuilder()
-    for label, period in (
+    rows = (
         ("📅 Тиждень", "week"),
         ("🗓 Місяць", "month"),
         ("📆 Рік", "year"),
-    ):
+        ("📅 Мин. тиждень", "last_week"),
+        ("🗓 Мин. місяць", "last_month"),
+        ("📆 Мин. рік", "last_year"),
+    )
+    for label, period in rows:
         builder.button(text=label, callback_data=ChartPeriod(period=period))
-    builder.adjust(3)
+    builder.adjust(3, 3)
     return builder.as_markup()
 
 

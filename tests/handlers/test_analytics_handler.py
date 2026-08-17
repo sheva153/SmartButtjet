@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiogram.types import CallbackQuery, Message
 
-from income_stats.bot.ui import ChartPeriod
+from income_stats.bot.ui import ChartPeriod, chart_period_keyboard
 from income_stats.config import AppConfig
 from income_stats.handlers.analytics_handler import (
     analytics_router,
@@ -36,6 +36,13 @@ class UnhashableAwaitable:
 def test_chart_sender_is_importable() -> None:
     assert callable(send_chart)
     assert analytics_router.name == "analytics"
+
+
+def test_chart_keyboard_has_preset_buttons() -> None:
+    markup = chart_period_keyboard()
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+    assert "📅 Тиждень" in labels
+    assert any("мин." in label.lower() for label in labels)
 
 
 @pytest.mark.asyncio
