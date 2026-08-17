@@ -142,6 +142,21 @@ class ChatSetting(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class ChatGoal(BaseModel):
+    """Per-chat monthly income goal."""
+
+    chat_id: int
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3)
+    updated_by: int
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, value: object) -> str:
+        return _normalize_currency(value)
+
+
 class FunItem(BaseModel):
     """A purchasable item used in playful income summaries."""
 

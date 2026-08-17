@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from income_stats.models import ChatSetting, IncomeRecord, RecordNote
+from income_stats.models import ChatGoal, ChatSetting, IncomeRecord, RecordNote
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services.records_service import (
     EditLockError,
@@ -42,6 +42,7 @@ class FakeRecordsRepository:
     def __init__(self, records: list[IncomeRecord]) -> None:
         self.records = {record.id: record for record in records}
         self.notes: list[RecordNote] = []
+        self.goals: dict[int, ChatGoal] = {}
 
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         self.records[record.id] = record
@@ -112,6 +113,25 @@ class FakeRecordsRepository:
             enabled=enabled,
             updated_by=updated_by,
         )
+
+    async def get_goal(self, chat_id: int) -> ChatGoal | None:
+        return self.goals.get(chat_id)
+
+    async def set_goal(
+        self,
+        chat_id: int,
+        amount: Decimal,
+        currency: str,
+        updated_by: int,
+    ) -> ChatGoal:
+        goal = ChatGoal(
+            chat_id=chat_id,
+            amount=amount,
+            currency=currency,
+            updated_by=updated_by,
+        )
+        self.goals[chat_id] = goal
+        return goal
 
 
 @pytest.fixture

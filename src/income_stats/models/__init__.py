@@ -2,6 +2,7 @@
 
 from income_stats.models.domain import (
     CHART_PERIODS,
+    ChatGoal,
     ChatSetting,
     FunItem,
     FunSummaryConfig,
@@ -15,6 +16,7 @@ from income_stats.models.domain import (
 
 __all__ = [
     "CHART_PERIODS",
+    "ChatGoal",
     "ChatSetting",
     "FunItem",
     "FunSummaryConfig",
