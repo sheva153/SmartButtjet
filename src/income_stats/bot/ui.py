@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from income_stats.models import IncomeRecord
+from income_stats.models import CHART_PERIODS, IncomeRecord
 
 MENU_RECORDS = "🗂 Записи"
 MENU_ANALYTICS = "📊 Аналітика"
@@ -26,18 +26,23 @@ class ChartPeriod(CallbackData, prefix="chart"):
     period: str
 
 
+CHART_PERIOD_LABELS = {
+    "week": "📅 Тиждень",
+    "month": "🗓 Місяць",
+    "year": "📆 Рік",
+    "last_week": "📅 Мин. тиждень",
+    "last_month": "🗓 Мин. місяць",
+    "last_year": "📆 Мин. рік",
+}
+
+
 def chart_period_keyboard():
     builder = InlineKeyboardBuilder()
-    rows = (
-        ("📅 Тиждень", "week"),
-        ("🗓 Місяць", "month"),
-        ("📆 Рік", "year"),
-        ("📅 Мин. тиждень", "last_week"),
-        ("🗓 Мин. місяць", "last_month"),
-        ("📆 Мин. рік", "last_year"),
-    )
-    for label, period in rows:
-        builder.button(text=label, callback_data=ChartPeriod(period=period))
+    for period in CHART_PERIODS:
+        builder.button(
+            text=CHART_PERIOD_LABELS[period],
+            callback_data=ChartPeriod(period=period),
+        )
     builder.adjust(3, 3)
     return builder.as_markup()
 

@@ -326,7 +326,7 @@ def _write_chart_artifacts(
     token = uuid4().hex
     png = (
         artifact_directory / f"income-chart-{token}.png"
-        if config.static_preview and period in CHART_PERIODS
+        if config.static_preview and (date_range is not None or period in CHART_PERIODS)
         else None
     )
     html = (

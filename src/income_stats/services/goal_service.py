@@ -10,6 +10,8 @@ from income_stats.models import GoalConfig
 from income_stats.repositories import RecordsRepository
 from income_stats.services.analytics_service import AnalyticsService
 
+_RNG = random.SystemRandom()
+
 
 @dataclass(frozen=True)
 class GoalProgress:
@@ -82,4 +84,4 @@ class GoalService:
             "behind": self._config.behind_phrases,
             "reached": self._config.reached_phrases,
         }[status]
-        return random.SystemRandom().choice(pool) if pool else ""
+        return _RNG.choice(pool) if pool else ""

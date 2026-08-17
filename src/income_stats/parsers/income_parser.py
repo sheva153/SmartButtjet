@@ -426,13 +426,12 @@ def parse_income_message(
 ) -> list[ParsedIncome]:
     """Parse every unprotected amount in a message as income or expense."""
     current_date = today or datetime.now(UTC).date()
-    message_is_expense = _has_expense_marker(text, config) or bool(
-        LEADING_MINUS.search(text)
-    )
     # Neutralize a leading minus (offset-preserving: one char -> one space) so the
     # digits after it can still be matched as money; MONEY_PATTERN's lookbehind
-    # otherwise refuses to match anything immediately preceded by `-`/`−`.
-    money_text = LEADING_MINUS.sub(" ", text)
+    # otherwise refuses to match anything immediately preceded by `-`/`−`. `subn`
+    # does the substitution and counts the minuses in a single pass.
+    money_text, minus_count = LEADING_MINUS.subn(" ", text)
+    message_is_expense = minus_count > 0 or _has_expense_marker(text, config)
     context = _protected_context(money_text, current_date, config)
     if context.invalid_dates:
         raise IncomeParseError(f"Invalid income date: {context.invalid_dates[0]}")

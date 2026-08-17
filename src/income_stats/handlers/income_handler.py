@@ -75,7 +75,12 @@ async def income_message_handler(
             currency=record.currency,
         ).info("Income recorded")
 
-    goal_line = await goal_service.after_save_line(message.chat.id, today=today)
+    has_income = any(record.type == "income" for record in records)
+    goal_line = (
+        await goal_service.after_save_line(message.chat.id, today=today)
+        if has_income
+        else ""
+    )
 
     async def deliver_reply(record: IncomeRecord) -> None:
         is_income = record.type == "income"
