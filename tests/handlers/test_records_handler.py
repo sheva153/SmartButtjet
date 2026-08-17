@@ -91,7 +91,7 @@ async def test_menu_during_edit_clears_state_and_releases_lock() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chart_menu_during_edit_reports_empty_data() -> None:
+async def test_chart_menu_during_edit_shows_period_picker() -> None:
     message = SimpleNamespace(
         text="📈 Діаграма",
         from_user=SimpleNamespace(id=7),
@@ -103,9 +103,7 @@ async def test_chart_menu_during_edit_reports_empty_data() -> None:
         clear=AsyncMock(),
     )
     records = SimpleNamespace(navigate_away=Mock())
-    analytics = SimpleNamespace(
-        build_chart_artifacts=AsyncMock(side_effect=ValueError("empty"))
-    )
+    analytics = SimpleNamespace(build_chart_artifacts=AsyncMock())
 
     assert await handle_menu_during_interaction(
         cast(Message, message),
@@ -114,7 +112,12 @@ async def test_chart_menu_during_edit_reports_empty_data() -> None:
         cast(AnalyticsService, analytics),
     )
 
-    message.answer.assert_awaited_once_with("Немає даних для діаграми.")
+    # Interrupting an edit with the chart button offers the same period picker,
+    # not a direct default-period chart.
+    analytics.build_chart_artifacts.assert_not_awaited()
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args is not None
+    assert message.answer.await_args.kwargs.get("reply_markup") is not None
 
 
 @pytest.mark.asyncio

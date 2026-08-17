@@ -22,6 +22,22 @@ class RecordAction(CallbackData, prefix="record"):
     value: str = ""
 
 
+class ChartPeriod(CallbackData, prefix="chart"):
+    period: str
+
+
+def chart_period_keyboard():
+    builder = InlineKeyboardBuilder()
+    for label, period in (
+        ("📅 Тиждень", "week"),
+        ("🗓 Місяць", "month"),
+        ("📆 Рік", "year"),
+    ):
+        builder.button(text=label, callback_data=ChartPeriod(period=period))
+    builder.adjust(3)
+    return builder.as_markup()
+
+
 class EditState(StatesGroup):
     waiting_value = State()
 

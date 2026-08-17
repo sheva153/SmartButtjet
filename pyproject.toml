@@ -5,8 +5,8 @@ description = "Interactive Telegram income tracker with CSV analytics"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "aiogram>=3.26,<4",
-    "kaleido>=1.2,<2",
     "loguru>=0.7,<1",
+    "matplotlib>=3.9,<4",
     "pandas>=3,<4",
     "plotly>=6.5,<7",
     "pydantic>=2.12,<3",

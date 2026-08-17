@@ -2,23 +2,32 @@
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from loguru import logger
 
-from income_stats.bot.ui import MENU_ANALYTICS, MENU_CHART
+from income_stats.bot.ui import (
+    MENU_ANALYTICS,
+    MENU_CHART,
+    ChartPeriod,
+    chart_period_keyboard,
+)
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
+from income_stats.models import CHART_PERIODS, Period
 from income_stats.services import AnalyticsService
 from income_stats.utils import temporary_artifacts
 
 analytics_router = Router(name="analytics")
 
 
-async def send_chart(message: Message, service: AnalyticsService) -> None:
-    artifacts = await service.build_chart_artifacts(message.chat.id)
+async def send_chart(
+    message: Message, service: AnalyticsService, period: Period | None = None
+) -> None:
+    artifacts = await service.build_chart_artifacts(message.chat.id, period)
     paths = tuple(path for path in (artifacts.png, artifacts.html) if path is not None)
     with temporary_artifacts(*paths):
         deliveries = []
@@ -55,16 +64,37 @@ async def stats_handler(message: Message, analytics_service: AnalyticsService) -
 
 @analytics_router.message(Command("chart"))
 @analytics_router.message(F.text == MENU_CHART)
-async def chart_handler(message: Message, analytics_service: AnalyticsService) -> None:
+async def chart_handler(message: Message) -> None:
     user = message.from_user
     logger.bind(
         chat_id=message.chat.id,
         user_id=user.id if user is not None else None,
-    ).info("Chart requested")
+    ).info("Chart period requested")
+    await message.answer(
+        "Оберіть період для діаграми:", reply_markup=chart_period_keyboard()
+    )
+
+
+@analytics_router.callback_query(ChartPeriod.filter())
+async def chart_period_callback(
+    query: CallbackQuery,
+    callback_data: ChartPeriod,
+    analytics_service: AnalyticsService,
+) -> None:
+    await query.answer()
+    if callback_data.period not in CHART_PERIODS or not isinstance(
+        query.message, Message
+    ):
+        return
+    period = cast(Period, callback_data.period)
+    logger.bind(chat_id=query.message.chat.id, period=period).info("Chart requested")
     try:
-        await send_chart(message, analytics_service)
+        await send_chart(query.message, analytics_service, period)
     except ValueError:
-        await message.answer("Немає даних для діаграми.")
+        await query.message.answer("Немає даних для діаграми.")
+    except Exception:
+        logger.bind(chat_id=query.message.chat.id).exception("Chart build failed")
+        await query.message.answer("Не вдалося побудувати діаграму.")
 
 
 @analytics_router.message(Command("export"))

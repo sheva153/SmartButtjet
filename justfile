@@ -4,9 +4,6 @@ export UV_CACHE_DIR := ".uv-cache"
 setup:
     uv sync --locked
 
-setup-chart:
-    uv run plotly_get_chrome -y
-
 run:
     uv run python main.py bot
 
