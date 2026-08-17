@@ -28,6 +28,9 @@ PERIOD_TITLES = {
     "week": "Звіт за тиждень",
     "month": "Звіт за місяць",
     "year": "Звіт за рік",
+    "last_week": "Звіт за минулий тиждень",
+    "last_month": "Звіт за минулий місяць",
+    "last_year": "Звіт за минулий рік",
 }
 
 
@@ -36,6 +39,14 @@ def _period_buckets(
     reference: date,
 ) -> tuple[list[str], Callable[[date], int | None]]:
     """Return the x-axis labels and a date→bucket-index mapper for a period."""
+    if period == "last_week":
+        return _period_buckets("week", reference - timedelta(days=7))
+    if period == "last_month":
+        first_this = reference.replace(day=1)
+        return _period_buckets("month", first_this - timedelta(days=1))
+    if period == "last_year":
+        return _period_buckets("year", date(reference.year - 1, 1, 1))
+
     if period == "week":
         start = reference - timedelta(days=reference.weekday())
 
@@ -177,7 +188,8 @@ def render_report_png(
 
     subtitle = " · ".join(_subtitle_part(currency) for currency in currencies)
     axes.set_title(f"{PERIOD_TITLES[period]}\n{subtitle or '—'}")
-    axes.legend(title="Валюта")
+    if currencies:
+        axes.legend(title="Валюта")
     figure.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path)

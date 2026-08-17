@@ -7,8 +7,24 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-Period = Literal["today", "week", "month", "year", "all"]
-CHART_PERIODS: tuple[Period, ...] = ("week", "month", "year")
+Period = Literal[
+    "today",
+    "week",
+    "month",
+    "year",
+    "all",
+    "last_week",
+    "last_month",
+    "last_year",
+]
+CHART_PERIODS: tuple[Period, ...] = (
+    "week",
+    "month",
+    "year",
+    "last_week",
+    "last_month",
+    "last_year",
+)
 
 RecordType = Literal["income", "expense"]
 

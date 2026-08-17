@@ -105,6 +105,33 @@ class AnalyticsService:
                     dates.map(lambda value: value.year == current_date.year)
                 ].copy(),
             )
+        if period == "last_week":
+            this_start = current_date - timedelta(days=current_date.weekday())
+            start = this_start - timedelta(days=7)
+            end = this_start - timedelta(days=1)
+            return cast(
+                pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy()
+            )
+        if period == "last_month":
+            first_this = current_date.replace(day=1)
+            last_prev = first_this - timedelta(days=1)
+            return cast(
+                pd.DataFrame,
+                frame.loc[
+                    dates.map(
+                        lambda value: (
+                            (value.year, value.month)
+                            == (last_prev.year, last_prev.month)
+                        )
+                    )
+                ].copy(),
+            )
+        if period == "last_year":
+            year = current_date.year - 1
+            return cast(
+                pd.DataFrame,
+                frame.loc[dates.map(lambda value: value.year == year)].copy(),
+            )
         raise ValueError(f"Unsupported analytics period: {period}")
 
     @staticmethod

@@ -1,3 +1,4 @@
+import warnings
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from income_stats.models import Period
 from income_stats.services.report_chart import (
+    PERIOD_TITLES,
     _aggregate,
     _legend_label,
     _period_buckets,
@@ -49,6 +51,75 @@ def test_year_buckets_are_twelve_months() -> None:
     assert index_of(date(2026, 1, 5)) == 0
     assert index_of(date(2026, 12, 31)) == 11
     assert index_of(date(2025, 12, 31)) is None
+
+
+def test_last_week_buckets_shift_reference_back_a_week() -> None:
+    labels, index_of = _period_buckets("last_week", date(2026, 8, 17))  # Monday
+    assert labels == ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+    assert index_of(date(2026, 8, 10)) == 0  # Monday of last week
+    assert index_of(date(2026, 8, 16)) == 6  # Sunday of last week
+    assert index_of(date(2026, 8, 17)) is None  # this week
+
+
+def test_last_month_buckets_resolve_previous_month() -> None:
+    labels, index_of = _period_buckets("last_month", date(2026, 8, 17))
+    assert len(labels) == 31  # July has 31 days
+    assert index_of(date(2026, 7, 1)) == 0
+    assert index_of(date(2026, 8, 1)) is None
+
+
+def test_last_year_buckets_resolve_previous_year() -> None:
+    labels, index_of = _period_buckets("last_year", date(2026, 8, 17))
+    assert len(labels) == 12
+    assert index_of(date(2025, 1, 5)) == 0
+    assert index_of(date(2026, 1, 5)) is None
+
+
+def test_last_year_buckets_survive_leap_day_reference() -> None:
+    # 2028 is a leap year but 2027 is not; naive year-1 replace() would raise
+    # ValueError: day is out of range for month.
+    labels, index_of = _period_buckets("last_year", date(2028, 2, 29))
+    assert len(labels) == 12
+    assert index_of(date(2027, 1, 5)) == 0
+    assert index_of(date(2028, 1, 5)) is None
+
+
+def test_render_writes_png_for_leap_day_last_year_reference(tmp_path: Path) -> None:
+    frame = pd.DataFrame(
+        {
+            "income_date": [date(2027, 3, 1)],
+            "currency": ["UAH"],
+            "amount": [Decimal("100")],
+            "type": ["income"],
+        }
+    )
+    path = tmp_path / "leap.png"
+    render_report_png(frame, cast(Period, "last_year"), date(2028, 2, 29), path)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_report_png_no_warning_when_period_has_no_matching_data(
+    tmp_path: Path,
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "income_date": [date(2026, 8, 3)],
+            "currency": ["UAH"],
+            "amount": [Decimal("100")],
+            "type": ["income"],
+        }
+    )
+    path = tmp_path / "empty.png"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render_report_png(frame, cast(Period, "last_month"), date(2026, 8, 17), path)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_preset_periods_have_titles() -> None:
+    assert PERIOD_TITLES["last_week"] == "Звіт за минулий тиждень"
+    assert PERIOD_TITLES["last_month"] == "Звіт за минулий місяць"
+    assert PERIOD_TITLES["last_year"] == "Звіт за минулий рік"
 
 
 def test_unsupported_period_raises() -> None:
@@ -99,7 +170,9 @@ def test_legend_label_includes_totals() -> None:
     )
 
 
-@pytest.mark.parametrize("period", ["week", "month", "year"])
+@pytest.mark.parametrize(
+    "period", ["week", "month", "year", "last_week", "last_month", "last_year"]
+)
 def test_render_writes_png(period: str, tmp_path: Path) -> None:
     frame = pd.DataFrame(
         {

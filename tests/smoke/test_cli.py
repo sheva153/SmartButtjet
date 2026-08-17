@@ -119,6 +119,17 @@ def test_analytics_is_scoped_to_explicit_chat(tmp_path: Path) -> None:
     assert "9,999.00" not in result.stdout
 
 
+def test_analytics_accepts_last_month_period(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    _seed_scoped_records(config)
+
+    result = _run_cli(
+        config, "analytics", "--chat-id", "-100", "--period", "last_month"
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_export_creates_chat_scoped_zip(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
     repository = _seed_scoped_records(config)

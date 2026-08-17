@@ -255,6 +255,65 @@ async def test_period_and_chat_filtering(tmp_path: Path) -> None:
     assert sorted(year["id"]) == ["old", "today"]
 
 
+async def test_last_month_window(tmp_path: Path) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("july", "100", income_date=date(2026, 7, 15)),
+            make_record("august", "200", income_date=date(2026, 8, 5)),
+        ]
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    frame = await service.frame(-100, "last_month", today=date(2026, 8, 17))
+
+    assert list(frame["id"]) == ["july"]
+    assert set(frame["income_date"].map(lambda value: value.month)) == {7}
+
+
+async def test_last_week_window(tmp_path: Path) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("last-week", "100", income_date=date(2026, 8, 12)),
+            make_record("this-week", "200", income_date=date(2026, 8, 17)),
+            make_record("two-weeks-ago", "300", income_date=date(2026, 8, 3)),
+        ]
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    # Aug 17 2026 is a Monday; last week = Aug 10..Aug 16
+    frame = await service.frame(-100, "last_week", today=date(2026, 8, 17))
+
+    assert list(frame["id"]) == ["last-week"]
+    assert frame["income_date"].min() >= date(2026, 8, 10)
+    assert frame["income_date"].max() <= date(2026, 8, 16)
+
+
+async def test_last_year_window(tmp_path: Path) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("last-year", "100", income_date=date(2025, 12, 31)),
+            make_record("this-year", "200", income_date=date(2026, 1, 1)),
+        ]
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+
+    frame = await service.frame(-100, "last_year", today=date(2026, 8, 17))
+
+    assert list(frame["id"]) == ["last-year"]
+
+
 async def test_invalid_runtime_period_is_rejected(
     analytics_service: AnalyticsService,
 ) -> None:
