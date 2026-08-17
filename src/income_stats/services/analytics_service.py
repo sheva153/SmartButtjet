@@ -124,6 +124,26 @@ class AnalyticsService:
         return next(iter(totals.values()), Decimal())
 
     @staticmethod
+    def totals_by_type(frame: pd.DataFrame) -> dict[str, dict[str, Decimal]]:
+        result: dict[str, dict[str, Decimal]] = {}
+        if frame.empty:
+            return result
+        for key, rows in frame.groupby(["currency", "type"], sort=True):
+            currency, kind = cast(tuple[str, str], key)
+            bucket = result.setdefault(
+                str(currency), {"income": Decimal(), "expense": Decimal()}
+            )
+            bucket[str(kind)] = sum(rows["amount"], start=Decimal())
+        return result
+
+    @classmethod
+    def net(cls, frame: pd.DataFrame) -> dict[str, Decimal]:
+        return {
+            currency: kinds["income"] - kinds["expense"]
+            for currency, kinds in cls.totals_by_type(frame).items()
+        }
+
+    @staticmethod
     def _label_breakdown(frame: pd.DataFrame, column: str) -> pd.DataFrame:
         if frame.empty:
             return pd.DataFrame(columns=["amount"])
@@ -158,11 +178,14 @@ class AnalyticsService:
         )
         if frame.empty:
             return "Записів ще немає."
-        lines = [f"Записів: {len(frame)}", "Загалом:"]
-        lines.extend(
-            f"• {amount:,.2f} {currency}"
-            for currency, amount in self.totals(frame).items()
-        )
+        totals = self.totals_by_type(frame)
+        lines = [f"Записів: {len(frame)}"]
+        for currency, kinds in totals.items():
+            net = kinds["income"] - kinds["expense"]
+            lines.append(
+                f"{currency}: Дохід {kinds['income']:,.2f} · "
+                f"Витрати {kinds['expense']:,.2f} · Чистими {net:,.2f}"
+            )
         return "\n".join(lines)
 
     async def build_chart_artifacts(

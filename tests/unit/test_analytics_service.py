@@ -18,6 +18,7 @@ from income_stats.models import (
     IncomeRecord,
     Period,
     RecordNote,
+    RecordType,
 )
 from income_stats.repositories import RecordsRepository
 from income_stats.services import analytics_service as analytics_module
@@ -35,6 +36,7 @@ def make_record(
     tags: list[str] | None = None,
     income_date: date = date(2026, 7, 29),
     chat_id: int = -100,
+    record_type: RecordType = "income",
 ) -> IncomeRecord:
     return IncomeRecord(
         id=record_id,
@@ -44,6 +46,7 @@ def make_record(
         original_text=amount,
         amount=Decimal(amount),
         currency=currency,
+        type=record_type,
         categories=categories or ["other"],
         tags=tags or [],
         income_date=income_date,
@@ -124,6 +127,58 @@ def analytics_service(
     )
 
 
+@pytest.fixture
+def mixed_repository() -> FakeAnalyticsRepository:
+    return FakeAnalyticsRepository(
+        [
+            make_record("income-one", "5000", chat_id=1, record_type="income"),
+            make_record("income-two", "7000", chat_id=1, record_type="income"),
+            make_record("expense-one", "3000", chat_id=1, record_type="expense"),
+        ]
+    )
+
+
+@pytest.fixture
+def analytics_service_with_mixed(
+    mixed_repository: FakeAnalyticsRepository,
+    tmp_path: Path,
+) -> AnalyticsService:
+    return AnalyticsService(
+        as_repository(mixed_repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+        timezone="Europe/Kyiv",
+    )
+
+
+async def test_totals_by_type_splits_currencies(
+    analytics_service_with_mixed: AnalyticsService,
+) -> None:
+    frame = await analytics_service_with_mixed.frame(1, "all")
+    totals = AnalyticsService.totals_by_type(frame)
+
+    assert totals["UAH"]["income"] == Decimal("12000")
+    assert totals["UAH"]["expense"] == Decimal("3000")
+
+
+async def test_net_subtracts_expense(
+    analytics_service_with_mixed: AnalyticsService,
+) -> None:
+    frame = await analytics_service_with_mixed.frame(1, "all")
+
+    assert AnalyticsService.net(frame)["UAH"] == Decimal("9000")
+
+
+async def test_summary_shows_income_expense_net(
+    analytics_service_with_mixed: AnalyticsService,
+) -> None:
+    text = await analytics_service_with_mixed.summary(chat_id=1, period="all")
+
+    assert "Дохід" in text
+    assert "Витрати" in text
+    assert "Чистими" in text
+
+
 async def test_category_breakdown_expands_without_inflating_total(
     analytics_service: AnalyticsService,
 ) -> None:
@@ -151,8 +206,8 @@ async def test_summary_keeps_mixed_currencies_separate(tmp_path: Path) -> None:
 
     summary = await service.summary(-100, "all")
 
-    assert "500.00 UAH" in summary
-    assert "20.00 USD" in summary
+    assert "UAH: Дохід 500.00 · Витрати 0.00 · Чистими 500.00" in summary
+    assert "USD: Дохід 20.00 · Витрати 0.00 · Чистими 20.00" in summary
     assert "520.00" not in summary
     with pytest.raises(ValueError, match="mixed currencies"):
         service.total(await service.frame(-100))
@@ -172,7 +227,7 @@ async def test_summary_aggregates_same_currency_records(tmp_path: Path) -> None:
     summary = await service.summary(-100, "all")
 
     assert "Записів: 2" in summary
-    assert "2,000.00 UAH" in summary
+    assert "UAH: Дохід 2,000.00 · Витрати 0.00 · Чистими 2,000.00" in summary
 
 
 async def test_period_and_chat_filtering(tmp_path: Path) -> None:

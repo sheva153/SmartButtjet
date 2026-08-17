@@ -115,7 +115,7 @@ def test_analytics_is_scoped_to_explicit_chat(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "Записів: 1" in result.stdout
-    assert "500.00 UAH" in result.stdout
+    assert "UAH: Дохід 500.00 · Витрати 0.00 · Чистими 500.00" in result.stdout
     assert "9,999.00" not in result.stdout
 
 
