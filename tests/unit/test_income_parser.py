@@ -542,3 +542,39 @@ def test_description_removes_money_and_temporal_tokens(
     assert [item.amount for item in parsed] == [Decimal("1500.00")]
     assert parsed[0].income_date == date(2026, 7, 10)
     assert parsed[0].description == "о Отримав за консультацію"
+
+
+def test_leading_minus_marks_expense(income_config: IncomeConfig) -> None:
+    parsed = parse_income_message("-500 таксі", income_config, today=date(2026, 8, 17))
+    assert parsed[0].type == "expense"
+    assert parsed[0].amount == Decimal("500.00")
+    assert parsed[0].description == "таксі"
+
+
+def test_unicode_minus_marks_expense(income_config: IncomeConfig) -> None:
+    parsed = parse_income_message("−500 таксі", income_config, today=date(2026, 8, 17))
+    assert parsed[0].type == "expense"
+    assert parsed[0].amount == Decimal("500.00")
+
+
+def test_keyword_marks_expense(income_config: IncomeConfig) -> None:
+    parsed = parse_income_message(
+        "витратив 500 на таксі", income_config, today=date(2026, 8, 17)
+    )
+    assert parsed[0].type == "expense"
+
+
+def test_plain_amount_is_income(income_config: IncomeConfig) -> None:
+    parsed = parse_income_message(
+        "500 зарплата", income_config, today=date(2026, 8, 17)
+    )
+    assert parsed[0].type == "income"
+
+
+def test_minus_does_not_break_dates(income_config: IncomeConfig) -> None:
+    # 15.10 is a valid date, not an expense of 15.10
+    parsed = parse_income_message(
+        "зарплата 200 15.10", income_config, today=date(2026, 8, 17)
+    )
+    assert parsed[0].type == "income"
+    assert parsed[0].income_date == date(2026, 10, 15)

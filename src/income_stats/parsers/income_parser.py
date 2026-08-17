@@ -134,6 +134,7 @@ STREET_INCOME_CONTEXT_PATTERN = re.compile(
 IPV4_LIKE_PATTERN = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 ISO_DATE_LIKE_PATTERN = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 MAX_DESCRIPTION_LENGTH = 1000
+LEADING_MINUS = re.compile(r"(?<![\w\d])[-−](?=\d)")
 
 
 class IncomeParseError(ValueError):
@@ -402,6 +403,14 @@ def _income_date(context: _ProtectedContext, current_date: date) -> date:
     return current_date
 
 
+def _has_expense_marker(text: str, config: IncomeConfig) -> bool:
+    lowered = text.casefold()
+    return any(
+        re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", lowered)
+        for marker in config.expense_markers
+    )
+
+
 def _without_spans(text: str, spans: list[tuple[int, int]]) -> str:
     characters = list(text)
     for start, end in spans:
@@ -415,13 +424,20 @@ def parse_income_message(
     *,
     today: date | None = None,
 ) -> list[ParsedIncome]:
-    """Parse every unprotected amount in a message as income."""
+    """Parse every unprotected amount in a message as income or expense."""
     current_date = today or datetime.now(UTC).date()
-    context = _protected_context(text, current_date, config)
+    message_is_expense = _has_expense_marker(text, config) or bool(
+        LEADING_MINUS.search(text)
+    )
+    # Neutralize a leading minus (offset-preserving: one char -> one space) so the
+    # digits after it can still be matched as money; MONEY_PATTERN's lookbehind
+    # otherwise refuses to match anything immediately preceded by `-`/`−`.
+    money_text = LEADING_MINUS.sub(" ", text)
+    context = _protected_context(money_text, current_date, config)
     if context.invalid_dates:
         raise IncomeParseError(f"Invalid income date: {context.invalid_dates[0]}")
     candidates: list[tuple[re.Match[str], Decimal]] = []
-    for match in MONEY_PATTERN.finditer(text):
+    for match in MONEY_PATTERN.finditer(money_text):
         if _overlaps(match.span(), context.spans, context.starts):
             continue
         amount = _decimal_from_text(match.group("amount"))
@@ -458,6 +474,7 @@ def parse_income_message(
             tags=tags,
             description=description,
             income_date=income_date,
+            type="expense" if message_is_expense else "income",
         )
         for match, amount in candidates
     ]

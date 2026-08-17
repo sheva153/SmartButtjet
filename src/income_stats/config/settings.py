@@ -63,6 +63,9 @@ class TaxonomyConfig(BaseModel):
 class IncomeConfig(TaxonomyConfig):
     default_currency: str = "UAH"
     allow_custom_categories: bool = True
+    expense_markers: list[str] = Field(
+        default_factory=lambda: ["витрата", "витратив", "витратила", "мінус"]
+    )
 
     @field_validator("default_currency", mode="before")
     @classmethod
@@ -73,6 +76,16 @@ class IncomeConfig(TaxonomyConfig):
         if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
             raise ValueError("Currency must be a three-letter code")
         return currency
+
+    @field_validator("expense_markers", mode="before")
+    @classmethod
+    def normalize_expense_markers(cls, values: object) -> list[str]:
+        if not isinstance(values, list):
+            raise ValueError("expense_markers must be a list")
+        markers = [
+            str(value).strip().casefold() for value in values if str(value).strip()
+        ]
+        return list(dict.fromkeys(markers))
 
 
 class PermissionsConfig(BaseModel):
