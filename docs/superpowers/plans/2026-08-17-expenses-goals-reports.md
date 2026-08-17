@@ -47,9 +47,15 @@ def test_parsed_income_defaults_to_income_type():
 
 def test_record_accepts_expense_type():
     record = IncomeRecord(
-        telegram_message_id=1, chat_id=1, user_id=1, original_text="-10",
-        amount=Decimal("10"), currency="UAH", income_date=date(2026, 8, 17),
-        updated_by=1, type="expense",
+        telegram_message_id=1,
+        chat_id=1,
+        user_id=1,
+        original_text="-10",
+        amount=Decimal("10"),
+        currency="UAH",
+        income_date=date(2026, 8, 17),
+        updated_by=1,
+        type="expense",
     )
     assert record.type == "expense"
 
@@ -57,9 +63,15 @@ def test_record_accepts_expense_type():
 def test_record_rejects_unknown_type():
     with pytest.raises(ValidationError):
         IncomeRecord(
-            telegram_message_id=1, chat_id=1, user_id=1, original_text="x",
-            amount=Decimal("10"), currency="UAH", income_date=date(2026, 8, 17),
-            updated_by=1, type="refund",
+            telegram_message_id=1,
+            chat_id=1,
+            user_id=1,
+            original_text="x",
+            amount=Decimal("10"),
+            currency="UAH",
+            income_date=date(2026, 8, 17),
+            updated_by=1,
+            type="refund",
         )
 ```
 
@@ -124,18 +136,24 @@ def test_leading_minus_marks_expense(income_config):
 
 
 def test_keyword_marks_expense(income_config):
-    parsed = parse_income_message("витратив 500 на таксі", income_config, today=date(2026, 8, 17))
+    parsed = parse_income_message(
+        "витратив 500 на таксі", income_config, today=date(2026, 8, 17)
+    )
     assert parsed[0].type == "expense"
 
 
 def test_plain_amount_is_income(income_config):
-    parsed = parse_income_message("500 зарплата", income_config, today=date(2026, 8, 17))
+    parsed = parse_income_message(
+        "500 зарплата", income_config, today=date(2026, 8, 17)
+    )
     assert parsed[0].type == "income"
 
 
 def test_minus_does_not_break_dates(income_config):
     # 15.10 is a valid date, not an expense of 15.10
-    parsed = parse_income_message("зарплата 200 15.10", income_config, today=date(2026, 8, 17))
+    parsed = parse_income_message(
+        "зарплата 200 15.10", income_config, today=date(2026, 8, 17)
+    )
     assert parsed[0].type == "income"
     assert parsed[0].income_date == date(2026, 10, 15)
 ```
@@ -152,17 +170,18 @@ Expected: FAIL — `type` always defaults to income.
 In `settings.py`, `IncomeConfig`:
 
 ```python
-    expense_markers: list[str] = Field(
-        default_factory=lambda: ["витрата", "витратив", "витратила", "мінус"]
-    )
+expense_markers: list[str] = Field(
+    default_factory=lambda: ["витрата", "витратив", "витратила", "мінус"]
+)
 
-    @field_validator("expense_markers", mode="before")
-    @classmethod
-    def normalize_expense_markers(cls, values: object) -> list[str]:
-        if not isinstance(values, list):
-            raise ValueError("expense_markers must be a list")
-        markers = [str(value).strip().casefold() for value in values if str(value).strip()]
-        return list(dict.fromkeys(markers))
+
+@field_validator("expense_markers", mode="before")
+@classmethod
+def normalize_expense_markers(cls, values: object) -> list[str]:
+    if not isinstance(values, list):
+        raise ValueError("expense_markers must be a list")
+    markers = [str(value).strip().casefold() for value in values if str(value).strip()]
+    return list(dict.fromkeys(markers))
 ```
 
 (Add `Field` / `field_validator` are already imported.)
@@ -246,7 +265,9 @@ def test_reads_legacy_records_without_type_column(tmp_path):
     legacy = repo.records_path
     legacy.parent.mkdir(parents=True, exist_ok=True)
     columns = [c for c in RECORD_COLUMNS if c != "type"]
-    frame = pd.DataFrame([{**_legacy_row()}], columns=columns)  # _legacy_row: helper/inline dict
+    frame = pd.DataFrame(
+        [{**_legacy_row()}], columns=columns
+    )  # _legacy_row: helper/inline dict
     frame.to_csv(legacy, index=False)
 
     records = repo.list_records_sync(chat_id=1)
@@ -300,8 +321,12 @@ git commit -m "feat: migrate legacy records CSV to include type column"
 # tests/unit/test_income_service.py
 async def test_capture_preserves_expense_type(income_service):
     records = await income_service.capture(
-        text="-500 таксі", telegram_message_id=10, chat_id=1,
-        user_id=1, username="u", today=date(2026, 8, 17),
+        text="-500 таксі",
+        telegram_message_id=10,
+        chat_id=1,
+        user_id=1,
+        username="u",
+        today=date(2026, 8, 17),
     )
     assert records[0].type == "expense"
 ```
@@ -351,15 +376,18 @@ git commit -m "feat: persist expense type on capture"
 def _frame(rows):
     return pd.DataFrame(rows, columns=list(IncomeRecord.model_fields))
 
+
 def test_totals_by_type_splits_currencies():
     frame = _mixed_frame()  # two UAH incomes + one UAH expense (helper/inline)
     totals = AnalyticsService.totals_by_type(frame)
     assert totals["UAH"]["income"] == Decimal("12000")
     assert totals["UAH"]["expense"] == Decimal("3000")
 
+
 def test_net_subtracts_expense():
     frame = _mixed_frame()
     assert AnalyticsService.net(frame)["UAH"] == Decimal("9000")
+
 
 async def test_summary_shows_income_expense_net(analytics_service_with_mixed):
     text = await analytics_service_with_mixed.summary(chat_id=1, period="all")
@@ -378,22 +406,25 @@ Expected: FAIL — methods missing.
 Add to `AnalyticsService`:
 
 ```python
-    @staticmethod
-    def totals_by_type(frame: pd.DataFrame) -> dict[str, dict[str, Decimal]]:
-        result: dict[str, dict[str, Decimal]] = {}
-        if frame.empty:
-            return result
-        for (currency, kind), rows in frame.groupby(["currency", "type"], sort=True):
-            bucket = result.setdefault(str(currency), {"income": Decimal(), "expense": Decimal()})
-            bucket[str(kind)] = sum(rows["amount"], start=Decimal())
+@staticmethod
+def totals_by_type(frame: pd.DataFrame) -> dict[str, dict[str, Decimal]]:
+    result: dict[str, dict[str, Decimal]] = {}
+    if frame.empty:
         return result
+    for (currency, kind), rows in frame.groupby(["currency", "type"], sort=True):
+        bucket = result.setdefault(
+            str(currency), {"income": Decimal(), "expense": Decimal()}
+        )
+        bucket[str(kind)] = sum(rows["amount"], start=Decimal())
+    return result
 
-    @classmethod
-    def net(cls, frame: pd.DataFrame) -> dict[str, Decimal]:
-        return {
-            currency: kinds["income"] - kinds["expense"]
-            for currency, kinds in cls.totals_by_type(frame).items()
-        }
+
+@classmethod
+def net(cls, frame: pd.DataFrame) -> dict[str, Decimal]:
+    return {
+        currency: kinds["income"] - kinds["expense"]
+        for currency, kinds in cls.totals_by_type(frame).items()
+    }
 ```
 
 Rewrite `summary()`'s body (keep the empty-frame guard) to:
@@ -442,20 +473,26 @@ git commit -m "feat: split analytics totals into income, expense, net"
 def test_aggregate_splits_income_and_expense():
     labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
     from income_stats.services.report_chart import _aggregate, _period_buckets
+
     labels, index_of = _period_buckets("week", date(2026, 8, 17))
     frame = _week_frame_mixed()  # income Mon 2000, expense Tue 500 (helper)
     series = _aggregate(frame, labels, index_of)
     assert series["UAH"]["income"][0] == 2000.0
     assert series["UAH"]["expense"][1] == 500.0
 
+
 def test_render_report_png_writes_file(tmp_path):
     path = tmp_path / "chart.png"
     render_report_png(_week_frame_mixed(), "week", date(2026, 8, 17), path)
     assert path.exists() and path.stat().st_size > 0
 
+
 def test_legend_label_includes_totals():
     from income_stats.services.report_chart import _legend_label
-    assert _legend_label("UAH", income=12000.0, expense=3000.0) == "UAH: +12 000 / −3 000"
+
+    assert (
+        _legend_label("UAH", income=12000.0, expense=3000.0) == "UAH: +12 000 / −3 000"
+    )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -473,7 +510,10 @@ def _aggregate(
 ) -> dict[str, dict[str, list[float]]]:
     series: dict[str, dict[str, list[float]]] = {}
     for income_date, currency, amount, kind in zip(
-        frame["income_date"], frame["currency"], frame["amount"], frame["type"],
+        frame["income_date"],
+        frame["currency"],
+        frame["amount"],
+        frame["type"],
         strict=True,
     ):
         bucket = index_of(income_date)
@@ -496,59 +536,74 @@ def _legend_label(currency: str, *, income: float, expense: float) -> str:
 Replace the drawing loop so each currency plots income (positive) and expense (negative, same color, hatched) and the legend label carries totals:
 
 ```python
-    labels, index_of = _period_buckets(period, reference)
-    series = _aggregate(frame, labels, index_of)
-    currencies = sorted(series)
-    positions = range(len(labels))
-    figure = Figure(figsize=(max(8.0, len(labels) * 0.5), 5.0), dpi=150)
-    FigureCanvasAgg(figure)
-    axes = figure.subplots()
+labels, index_of = _period_buckets(period, reference)
+series = _aggregate(frame, labels, index_of)
+currencies = sorted(series)
+positions = range(len(labels))
+figure = Figure(figsize=(max(8.0, len(labels) * 0.5), 5.0), dpi=150)
+FigureCanvasAgg(figure)
+axes = figure.subplots()
 
-    group_width = 0.8
-    bar_width = group_width / max(1, len(currencies))
-    for order, currency in enumerate(currencies):
-        income = series[currency]["income"]
-        expense = series[currency]["expense"]
-        offsets = [
-            position - group_width / 2 + bar_width * (order + 0.5)
-            for position in positions
-        ]
-        income_bars = axes.bar(
-            offsets, income, width=bar_width,
-            label=_legend_label(currency, income=sum(income), expense=sum(expense)),
-        )
-        color = income_bars[0].get_facecolor()
-        axes.bar(
-            offsets, [-value for value in expense], width=bar_width,
-            color=color, alpha=0.55, hatch="//",
-        )
-        for offset, up, down in zip(offsets, income, expense, strict=True):
-            if up > 0:
-                axes.annotate(_format_amount(up), (offset, up), ha="center",
-                              va="bottom", fontsize=8,
-                              rotation=90 if len(labels) > 12 else 0)
-            if down > 0:
-                axes.annotate(_format_amount(down), (offset, -down), ha="center",
-                              va="top", fontsize=8,
-                              rotation=90 if len(labels) > 12 else 0)
-
-    axes.axhline(0, color="black", linewidth=0.8)
-    axes.set_xticks(list(positions))
-    axes.set_xticklabels(labels)
-    axes.set_ylabel("Сума")
-    axes.margins(y=0.18)
-    axes.grid(axis="y", linestyle=":", alpha=0.4)
-    subtitle = " · ".join(
-        f"{currency} Дохід {_format_amount(sum(series[currency]['income']))}"
-        f" · Витрати {_format_amount(sum(series[currency]['expense']))}"
-        f" · Чистими {_format_amount(sum(series[currency]['income']) - sum(series[currency]['expense']))}"
-        for currency in currencies
+group_width = 0.8
+bar_width = group_width / max(1, len(currencies))
+for order, currency in enumerate(currencies):
+    income = series[currency]["income"]
+    expense = series[currency]["expense"]
+    offsets = [
+        position - group_width / 2 + bar_width * (order + 0.5) for position in positions
+    ]
+    income_bars = axes.bar(
+        offsets,
+        income,
+        width=bar_width,
+        label=_legend_label(currency, income=sum(income), expense=sum(expense)),
     )
-    axes.set_title(f"{PERIOD_TITLES[period]}\n{subtitle or '—'}")
-    axes.legend(title="Валюта")
-    figure.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path)
+    color = income_bars[0].get_facecolor()
+    axes.bar(
+        offsets,
+        [-value for value in expense],
+        width=bar_width,
+        color=color,
+        alpha=0.55,
+        hatch="//",
+    )
+    for offset, up, down in zip(offsets, income, expense, strict=True):
+        if up > 0:
+            axes.annotate(
+                _format_amount(up),
+                (offset, up),
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                rotation=90 if len(labels) > 12 else 0,
+            )
+        if down > 0:
+            axes.annotate(
+                _format_amount(down),
+                (offset, -down),
+                ha="center",
+                va="top",
+                fontsize=8,
+                rotation=90 if len(labels) > 12 else 0,
+            )
+
+axes.axhline(0, color="black", linewidth=0.8)
+axes.set_xticks(list(positions))
+axes.set_xticklabels(labels)
+axes.set_ylabel("Сума")
+axes.margins(y=0.18)
+axes.grid(axis="y", linestyle=":", alpha=0.4)
+subtitle = " · ".join(
+    f"{currency} Дохід {_format_amount(sum(series[currency]['income']))}"
+    f" · Витрати {_format_amount(sum(series[currency]['expense']))}"
+    f" · Чистими {_format_amount(sum(series[currency]['income']) - sum(series[currency]['expense']))}"
+    for currency in currencies
+)
+axes.set_title(f"{PERIOD_TITLES[period]}\n{subtitle or '—'}")
+axes.legend(title="Валюта")
+figure.tight_layout()
+path.parent.mkdir(parents=True, exist_ok=True)
+figure.savefig(path)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -583,11 +638,16 @@ git commit -m "feat: diverging income/expense chart with per-currency legend tot
 # tests/unit/test_analytics_service.py
 async def test_last_month_window(analytics_service_seeded):
     # seed one record in July and one in August; today=Aug 17
-    frame = await analytics_service_seeded.frame(1, "last_month", today=date(2026, 8, 17))
+    frame = await analytics_service_seeded.frame(
+        1, "last_month", today=date(2026, 8, 17)
+    )
     assert set(frame["income_date"].map(lambda d: d.month)) == {7}
 
+
 async def test_last_week_window(analytics_service_seeded):
-    frame = await analytics_service_seeded.frame(1, "last_week", today=date(2026, 8, 17))
+    frame = await analytics_service_seeded.frame(
+        1, "last_week", today=date(2026, 8, 17)
+    )
     # Aug 17 2026 is a Monday; last week = Aug 10..Aug 16
     assert frame["income_date"].min() >= date(2026, 8, 10)
     assert frame["income_date"].max() <= date(2026, 8, 16)
@@ -610,32 +670,45 @@ Expected: FAIL — unsupported period / invalid choice.
 
 ```python
 Period = Literal[
-    "today", "week", "month", "year", "all",
-    "last_week", "last_month", "last_year",
+    "today",
+    "week",
+    "month",
+    "year",
+    "all",
+    "last_week",
+    "last_month",
+    "last_year",
 ]
 CHART_PERIODS: tuple[Period, ...] = (
-    "week", "month", "year", "last_week", "last_month", "last_year",
+    "week",
+    "month",
+    "year",
+    "last_week",
+    "last_month",
+    "last_year",
 )
 ```
 
 In `analytics_service.frame`, add branches (use `calendar`; `import calendar` already? add if missing):
 
 ```python
-        if period == "last_week":
-            this_start = current_date - timedelta(days=current_date.weekday())
-            start = this_start - timedelta(days=7)
-            end = this_start - timedelta(days=1)
-            return cast(pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy())
-        if period == "last_month":
-            first_this = current_date.replace(day=1)
-            last_prev = first_this - timedelta(days=1)
-            return cast(
-                pd.DataFrame,
-                frame.loc[dates.map(lambda v: (v.year, v.month) == (last_prev.year, last_prev.month))].copy(),
-            )
-        if period == "last_year":
-            year = current_date.year - 1
-            return cast(pd.DataFrame, frame.loc[dates.map(lambda v: v.year == year)].copy())
+if period == "last_week":
+    this_start = current_date - timedelta(days=current_date.weekday())
+    start = this_start - timedelta(days=7)
+    end = this_start - timedelta(days=1)
+    return cast(pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy())
+if period == "last_month":
+    first_this = current_date.replace(day=1)
+    last_prev = first_this - timedelta(days=1)
+    return cast(
+        pd.DataFrame,
+        frame.loc[
+            dates.map(lambda v: (v.year, v.month) == (last_prev.year, last_prev.month))
+        ].copy(),
+    )
+if period == "last_year":
+    year = current_date.year - 1
+    return cast(pd.DataFrame, frame.loc[dates.map(lambda v: v.year == year)].copy())
 ```
 
 - [ ] **Step 4: Resolve presets in `_period_buckets`**
@@ -693,23 +766,37 @@ git commit -m "feat: add last-week/month/year preset periods"
 # tests/unit/test_date_range.py
 from income_stats.parsers.date_range import parse_date_range
 
+
 def test_parses_two_dates():
-    assert parse_date_range("01.03 15.03", today=date(2026, 8, 17)) == (date(2026, 3, 1), date(2026, 3, 15))
+    assert parse_date_range("01.03 15.03", today=date(2026, 8, 17)) == (
+        date(2026, 3, 1),
+        date(2026, 3, 15),
+    )
+
 
 def test_parses_full_year_dates():
-    assert parse_date_range("01.03.2025 15.03.2025", today=date(2026, 8, 17)) == (date(2025, 3, 1), date(2025, 3, 15))
+    assert parse_date_range("01.03.2025 15.03.2025", today=date(2026, 8, 17)) == (
+        date(2025, 3, 1),
+        date(2025, 3, 15),
+    )
+
 
 def test_returns_none_for_garbage():
     assert parse_date_range("hello", today=date(2026, 8, 17)) is None
 
+
 def test_orders_swapped_dates():
-    assert parse_date_range("15.03 01.03", today=date(2026, 8, 17)) == (date(2026, 3, 1), date(2026, 3, 15))
+    assert parse_date_range("15.03 01.03", today=date(2026, 8, 17)) == (
+        date(2026, 3, 1),
+        date(2026, 3, 15),
+    )
 ```
 
 ```python
 # tests/unit/test_report_chart.py
 def test_range_buckets_by_day_for_short_span():
     from income_stats.services.report_chart import _range_buckets
+
     labels, index_of = _range_buckets(date(2026, 3, 1), date(2026, 3, 5))
     assert labels == ["01.03", "02.03", "03.03", "04.03", "05.03"]
     assert index_of(date(2026, 3, 3)) == 2
@@ -756,7 +843,9 @@ Export it from `src/income_stats/parsers/__init__.py`.
 `report_chart.py`:
 
 ```python
-def _range_buckets(start: date, end: date) -> tuple[list[str], Callable[[date], int | None]]:
+def _range_buckets(
+    start: date, end: date
+) -> tuple[list[str], Callable[[date], int | None]]:
     span = (end - start).days
     if span <= 62:
         labels = [
@@ -845,6 +934,7 @@ def test_set_and_get_goal(tmp_path):
     goal = repo.get_goal_sync(1)
     assert goal.amount == Decimal("50000") and goal.currency == "UAH"
 
+
 def test_set_goal_overwrites(tmp_path):
     repo = _repo(tmp_path)
     repo.set_goal_sync(1, Decimal("100"), "UAH", 7)
@@ -916,14 +1006,17 @@ async def test_progress_ahead(goal_service_seeded):
     progress = await goal_service_seeded.progress(1, today=date(2026, 8, 10))
     assert progress.status == "ahead"
 
+
 async def test_progress_behind(goal_service_low_income):
     progress = await goal_service_low_income.progress(1, today=date(2026, 8, 20))
     assert progress.status == "behind"
     assert progress.per_day_needed > 0
 
+
 async def test_reached(goal_service_reached):
     progress = await goal_service_reached.progress(1, today=date(2026, 8, 20))
     assert progress.status == "reached"
+
 
 async def test_after_save_line_empty_without_goal(goal_service_no_goal):
     assert await goal_service_no_goal.after_save_line(1, today=date(2026, 8, 20)) == ""
@@ -942,9 +1035,15 @@ Expected: FAIL — module missing.
 class GoalConfig(BaseModel):
     enabled: bool = True
     after_save_line: bool = True
-    ahead_phrases: list[str] = Field(default_factory=lambda: ["Так тримати! Ти випереджаєш темп 🚀"])
-    behind_phrases: list[str] = Field(default_factory=lambda: ["Час пришвидшитись — ще все встигаєш 💪"])
-    reached_phrases: list[str] = Field(default_factory=lambda: ["Ціль досягнута! Ти неймовірна 🎉"])
+    ahead_phrases: list[str] = Field(
+        default_factory=lambda: ["Так тримати! Ти випереджаєш темп 🚀"]
+    )
+    behind_phrases: list[str] = Field(
+        default_factory=lambda: ["Час пришвидшитись — ще все встигаєш 💪"]
+    )
+    reached_phrases: list[str] = Field(
+        default_factory=lambda: ["Ціль досягнута! Ти неймовірна 🎉"]
+    )
 ```
 
 Export it; add `goals: GoalConfig = Field(default_factory=GoalConfig)` to `AppConfig`.
@@ -976,8 +1075,12 @@ class GoalProgress:
 
 
 class GoalService:
-    def __init__(self, repository: RecordsRepository, analytics: AnalyticsService,
-                 config: GoalConfig) -> None:
+    def __init__(
+        self,
+        repository: RecordsRepository,
+        analytics: AnalyticsService,
+        config: GoalConfig,
+    ) -> None:
         self._repository = repository
         self._analytics = analytics
         self._config = config
@@ -1000,17 +1103,23 @@ class GoalService:
             status = "ahead"
         else:
             status = "behind"
-        return GoalProgress(goal.amount, goal.currency, actual, expected, per_day, status)
+        return GoalProgress(
+            goal.amount, goal.currency, actual, expected, per_day, status
+        )
 
     def render(self, progress: GoalProgress) -> str:
-        pct = (progress.actual / progress.amount * 100) if progress.amount else Decimal()
+        pct = (
+            (progress.actual / progress.amount * 100) if progress.amount else Decimal()
+        )
         phrase = self._phrase(progress.status)
         lines = [
             f"🎯 Ціль: {progress.amount:,.0f} {progress.currency}/місяць",
             f"Виконано: {progress.actual:,.0f} ({pct:.0f}%)",
         ]
         if progress.status == "behind":
-            lines.append(f"Треба ~{progress.per_day_needed:,.0f} {progress.currency}/день")
+            lines.append(
+                f"Треба ~{progress.per_day_needed:,.0f} {progress.currency}/день"
+            )
         lines.append(phrase)
         return "\n".join(lines)
 
@@ -1102,9 +1211,13 @@ goal_router = Router(name="goal")
 
 
 @goal_router.message(Command("goal"))
-async def goal_handler(message: Message, command: CommandObject,
-                       repository: RecordsRepository, goal_service: GoalService,
-                       app_config: AppConfig) -> None:
+async def goal_handler(
+    message: Message,
+    command: CommandObject,
+    repository: RecordsRepository,
+    goal_service: GoalService,
+    app_config: AppConfig,
+) -> None:
     today = datetime.now(ZoneInfo(app_config.bot.timezone)).date()
     if command.args:
         parts = command.args.split()
@@ -1113,13 +1226,16 @@ async def goal_handler(message: Message, command: CommandObject,
         except (InvalidOperation, IndexError):
             await message.answer("Формат: /goal 50000 [UAH]")
             return
-        currency = parts[1].upper() if len(parts) > 1 else app_config.income.default_currency
+        currency = (
+            parts[1].upper() if len(parts) > 1 else app_config.income.default_currency
+        )
         if amount <= 0:
             await message.answer("Ціль має бути більшою за нуль.")
             return
         user = message.from_user
-        await repository.set_goal(message.chat.id, amount, currency,
-                                  user.id if user else 0)
+        await repository.set_goal(
+            message.chat.id, amount, currency, user.id if user else 0
+        )
         await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/місяць")
         return
     progress = await goal_service.progress(message.chat.id, today=today)
@@ -1253,8 +1369,11 @@ Expected: FAIL.
 def chart_period_keyboard():
     builder = InlineKeyboardBuilder()
     rows = (
-        ("📅 Тиждень", "week"), ("🗓 Місяць", "month"), ("📆 Рік", "year"),
-        ("📅 Мин. тиждень", "last_week"), ("🗓 Мин. місяць", "last_month"),
+        ("📅 Тиждень", "week"),
+        ("🗓 Місяць", "month"),
+        ("📆 Рік", "year"),
+        ("📅 Мин. тиждень", "last_week"),
+        ("🗓 Мин. місяць", "last_month"),
         ("📆 Мин. рік", "last_year"),
     )
     for label, period in rows:

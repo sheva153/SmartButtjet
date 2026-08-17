@@ -9,6 +9,7 @@ from income_stats.models.domain import (
     ParsedIncome,
     Period,
     RecordNote,
+    RecordType,
     normalize_label,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "ParsedIncome",
     "Period",
     "RecordNote",
+    "RecordType",
     "normalize_label",
 ]

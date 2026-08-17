@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 Period = Literal["today", "week", "month", "year", "all"]
 CHART_PERIODS: tuple[Period, ...] = ("week", "month", "year")
 
+RecordType = Literal["income", "expense"]
+
 
 def normalize_label(value: str) -> str:
     """Normalize a human-entered category or tag to its storage label."""
@@ -44,6 +46,7 @@ class ParsedIncome(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str = ""
     income_date: date
+    type: RecordType = "income"
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -73,6 +76,7 @@ class IncomeRecord(BaseModel):
     original_text: str
     amount: Decimal = Field(gt=0)
     currency: str = Field(min_length=3, max_length=3)
+    type: RecordType = "income"
     categories: list[str] = Field(default_factory=lambda: ["other"])
     tags: list[str] = Field(default_factory=list)
     description: str = Field(default="", max_length=1000)
