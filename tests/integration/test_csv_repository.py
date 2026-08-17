@@ -125,6 +125,24 @@ def test_legacy_records_without_income_date_are_migrated(
     assert "income_date" in persisted.columns
 
 
+def test_legacy_records_without_type_are_migrated(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    legacy = make_record().model_dump(mode="json")
+    legacy["categories"] = json.dumps(legacy["categories"])
+    legacy["tags"] = json.dumps(legacy["tags"])
+    legacy.pop("type")
+    pd.DataFrame([legacy]).to_csv(csv_repository.records_path, index=False)
+
+    migrated = csv_repository.list_records_sync(-100)
+
+    assert migrated[0].type == "income"
+
+    csv_repository.migrate_records_sync()
+    persisted = pd.read_csv(csv_repository.records_path, dtype=str)
+    assert "type" in persisted.columns
+
+
 def test_read_does_not_rewrite_records_file(
     csv_repository: CsvRecordsRepository,
 ) -> None:

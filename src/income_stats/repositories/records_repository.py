@@ -205,6 +205,10 @@ class CsvRecordsRepository:
             frame = cast(pd.DataFrame, frame.drop(columns=["category"]))
             migrated = True
 
+        if "type" not in frame.columns:
+            frame["type"] = "income"
+            migrated = True
+
         missing = set(RECORD_COLUMNS) - set(frame.columns)
         if missing:
             raise ValueError(f"CSV {path} misses columns: {sorted(missing)}")
