@@ -23,6 +23,7 @@ def csv_repository(tmp_path: Path) -> CsvRecordsRepository:
             records_file=tmp_path / "records.csv",
             notes_file=tmp_path / "notes.csv",
             chat_settings_file=tmp_path / "chat-settings.csv",
+            goals_file=tmp_path / "goals.csv",
             export_directory=tmp_path / "exports",
         )
     )
@@ -123,6 +124,24 @@ def test_legacy_records_without_income_date_are_migrated(
     csv_repository.migrate_records_sync()
     persisted = pd.read_csv(csv_repository.records_path, dtype=str)
     assert "income_date" in persisted.columns
+
+
+def test_legacy_records_without_type_are_migrated(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    legacy = make_record().model_dump(mode="json")
+    legacy["categories"] = json.dumps(legacy["categories"])
+    legacy["tags"] = json.dumps(legacy["tags"])
+    legacy.pop("type")
+    pd.DataFrame([legacy]).to_csv(csv_repository.records_path, index=False)
+
+    migrated = csv_repository.list_records_sync(-100)
+
+    assert migrated[0].type == "income"
+
+    csv_repository.migrate_records_sync()
+    persisted = pd.read_csv(csv_repository.records_path, dtype=str)
+    assert "type" in persisted.columns
 
 
 def test_read_does_not_rewrite_records_file(
@@ -324,6 +343,52 @@ def test_chat_setting_is_persisted(
     csv_repository.set_chat_enabled_sync(-200, enabled=True, updated_by=9)
     assert csv_repository.is_chat_enabled_sync(-200) is True
     assert csv_repository.is_chat_enabled_sync(-100) is False
+
+
+def test_set_and_get_goal(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    assert csv_repository.get_goal_sync(1) is None
+
+    csv_repository.set_goal_sync(
+        chat_id=1,
+        amount=Decimal("50000"),
+        currency="UAH",
+        updated_by=7,
+    )
+    goal = csv_repository.get_goal_sync(1)
+
+    assert goal is not None
+    assert goal.amount == Decimal("50000")
+    assert goal.currency == "UAH"
+    assert goal.updated_by == 7
+
+
+def test_set_goal_overwrites(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.set_goal_sync(1, Decimal("100"), "UAH", 7)
+    csv_repository.set_goal_sync(1, Decimal("200"), "UAH", 7)
+
+    goal = csv_repository.get_goal_sync(1)
+
+    assert goal is not None
+    assert goal.amount == Decimal("200")
+
+
+async def test_async_set_and_get_goal(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    await csv_repository.set_goal(
+        chat_id=1,
+        amount=Decimal("300"),
+        currency="UAH",
+        updated_by=7,
+    )
+    goal = await csv_repository.get_goal(1)
+
+    assert goal is not None
+    assert goal.amount == Decimal("300")
 
 
 def test_missing_csv_columns_are_reported(

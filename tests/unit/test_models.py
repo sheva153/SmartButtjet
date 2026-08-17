@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from income_stats.config.settings import AppConfig, IncomeConfig, load_config
 from income_stats.models.domain import (
+    ChatGoal,
     IncomeRecord,
     ParsedIncome,
     normalize_label,
@@ -189,4 +190,61 @@ def test_models_reject_invalid_currency(currency: str) -> None:
             amount=Decimal("1"),
             currency=currency,
             income_date=date(2026, 7, 29),
+        )
+
+
+def test_parsed_income_defaults_to_income_type() -> None:
+    parsed = ParsedIncome(amount=Decimal("10"), income_date=date(2026, 8, 17))
+    assert parsed.type == "income"
+
+
+def test_record_accepts_expense_type() -> None:
+    record = IncomeRecord(
+        telegram_message_id=1,
+        chat_id=1,
+        user_id=1,
+        original_text="-10",
+        amount=Decimal("10"),
+        currency="UAH",
+        income_date=date(2026, 8, 17),
+        updated_by=1,
+        type="expense",
+    )
+    assert record.type == "expense"
+
+
+def test_record_rejects_unknown_type() -> None:
+    with pytest.raises(ValidationError):
+        IncomeRecord(
+            telegram_message_id=1,
+            chat_id=1,
+            user_id=1,
+            original_text="x",
+            amount=Decimal("10"),
+            currency="UAH",
+            income_date=date(2026, 8, 17),
+            updated_by=1,
+            type="refund",  # pyright: ignore[reportArgumentType]
+        )
+
+
+def test_chat_goal_normalizes_currency_before_length_validation() -> None:
+    goal = ChatGoal(
+        chat_id=-100,
+        amount=Decimal("50000"),
+        currency=" uah ",
+        updated_by=7,
+    )
+
+    assert goal.currency == "UAH"
+
+
+@pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-1")])
+def test_chat_goal_rejects_non_positive_amount(amount: Decimal) -> None:
+    with pytest.raises(ValidationError):
+        ChatGoal(
+            chat_id=-100,
+            amount=amount,
+            currency="UAH",
+            updated_by=7,
         )

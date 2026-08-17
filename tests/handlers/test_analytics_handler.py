@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -6,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiogram.types import CallbackQuery, Message
 
-from income_stats.bot.ui import ChartPeriod
+from income_stats.bot.ui import ChartPeriod, chart_period_keyboard
 from income_stats.config import AppConfig
 from income_stats.handlers.analytics_handler import (
     analytics_router,
@@ -35,6 +36,13 @@ class UnhashableAwaitable:
 def test_chart_sender_is_importable() -> None:
     assert callable(send_chart)
     assert analytics_router.name == "analytics"
+
+
+def test_chart_keyboard_has_preset_buttons() -> None:
+    markup = chart_period_keyboard()
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+    assert "📅 Тиждень" in labels
+    assert any("мин." in label.lower() for label in labels)
 
 
 @pytest.mark.asyncio
@@ -128,15 +136,60 @@ async def test_chart_handler_shows_period_picker(
     bind = Mock(return_value=bound_logger)
     monkeypatch.setattr("income_stats.handlers.analytics_handler.logger.bind", bind)
     message = SimpleNamespace(
+        text="/chart",
         from_user=SimpleNamespace(id=7),
         chat=SimpleNamespace(id=-100),
         answer=AsyncMock(),
     )
+    service = SimpleNamespace(build_chart_artifacts=AsyncMock())
 
-    await chart_handler(cast(Message, message))
+    await chart_handler(cast(Message, message), cast(AnalyticsService, service))
 
     bind.assert_called_once_with(chat_id=-100, user_id=7)
     bound_logger.info.assert_called_once_with("Chart period requested")
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args is not None
+    assert message.answer.await_args.kwargs.get("reply_markup") is not None
+    service.build_chart_artifacts.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chart_command_with_range_builds_chart(tmp_path: Path) -> None:
+    png = tmp_path / "chart.png"
+    png.write_bytes(b"\x89PNG")
+    message = SimpleNamespace(
+        text="/chart 01.08 15.08",
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+        answer_photo=AsyncMock(),
+    )
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(png, None))
+    )
+
+    await chart_handler(cast(Message, message), cast(AnalyticsService, service))
+
+    service.build_chart_artifacts.assert_awaited_once()
+    _, kwargs = service.build_chart_artifacts.call_args
+    assert kwargs.get("date_range") == (date(2026, 8, 1), date(2026, 8, 15))
+    message.answer.assert_not_awaited()
+    message.answer_photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chart_command_with_garbage_args_shows_picker() -> None:
+    message = SimpleNamespace(
+        text="/chart hello",
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+    )
+    service = SimpleNamespace(build_chart_artifacts=AsyncMock())
+
+    await chart_handler(cast(Message, message), cast(AnalyticsService, service))
+
+    service.build_chart_artifacts.assert_not_awaited()
     message.answer.assert_awaited_once()
     assert message.answer.await_args is not None
     assert message.answer.await_args.kwargs.get("reply_markup") is not None
@@ -162,7 +215,9 @@ async def test_chart_period_callback_builds_and_sends(tmp_path: Path) -> None:
         cast(AnalyticsService, service),
     )
 
-    service.build_chart_artifacts.assert_awaited_once_with(-100, "week")
+    service.build_chart_artifacts.assert_awaited_once_with(
+        -100, "week", date_range=None
+    )
     query_message.answer_photo.assert_awaited_once()
 
 

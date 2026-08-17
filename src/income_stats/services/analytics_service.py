@@ -63,6 +63,7 @@ class AnalyticsService:
         period: Period = "all",
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> pd.DataFrame:
         records = await self._repository.list_records(chat_id)
         if not records:
@@ -72,9 +73,14 @@ class AnalyticsService:
             columns=list(IncomeRecord.model_fields),
         )
         current_date = today or datetime.now(ZoneInfo(self._timezone)).date()
+        dates = frame["income_date"]
+        if date_range is not None:
+            start, end = date_range
+            return cast(
+                pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy()
+            )
         if period == "all":
             return frame
-        dates = frame["income_date"]
         if period == "today":
             return cast(pd.DataFrame, frame.loc[dates == current_date].copy())
         if period == "week":
@@ -105,6 +111,33 @@ class AnalyticsService:
                     dates.map(lambda value: value.year == current_date.year)
                 ].copy(),
             )
+        if period == "last_week":
+            this_start = current_date - timedelta(days=current_date.weekday())
+            start = this_start - timedelta(days=7)
+            end = this_start - timedelta(days=1)
+            return cast(
+                pd.DataFrame, frame.loc[(dates >= start) & (dates <= end)].copy()
+            )
+        if period == "last_month":
+            first_this = current_date.replace(day=1)
+            last_prev = first_this - timedelta(days=1)
+            return cast(
+                pd.DataFrame,
+                frame.loc[
+                    dates.map(
+                        lambda value: (
+                            (value.year, value.month)
+                            == (last_prev.year, last_prev.month)
+                        )
+                    )
+                ].copy(),
+            )
+        if period == "last_year":
+            year = current_date.year - 1
+            return cast(
+                pd.DataFrame,
+                frame.loc[dates.map(lambda value: value.year == year)].copy(),
+            )
         raise ValueError(f"Unsupported analytics period: {period}")
 
     @staticmethod
@@ -122,6 +155,26 @@ class AnalyticsService:
         if len(totals) > 1:
             raise ValueError("Cannot total mixed currencies")
         return next(iter(totals.values()), Decimal())
+
+    @staticmethod
+    def totals_by_type(frame: pd.DataFrame) -> dict[str, dict[str, Decimal]]:
+        result: dict[str, dict[str, Decimal]] = {}
+        if frame.empty:
+            return result
+        for key, rows in frame.groupby(["currency", "type"], sort=True):
+            currency, kind = cast(tuple[str, str], key)
+            bucket = result.setdefault(
+                str(currency), {"income": Decimal(), "expense": Decimal()}
+            )
+            bucket[str(kind)] = sum(rows["amount"], start=Decimal())
+        return result
+
+    @classmethod
+    def net(cls, frame: pd.DataFrame) -> dict[str, Decimal]:
+        return {
+            currency: kinds["income"] - kinds["expense"]
+            for currency, kinds in cls.totals_by_type(frame).items()
+        }
 
     @staticmethod
     def _label_breakdown(frame: pd.DataFrame, column: str) -> pd.DataFrame:
@@ -150,19 +203,24 @@ class AnalyticsService:
         period: Period | None = None,
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> str:
         frame = await self.frame(
             chat_id,
             period or self._config.default_period,
             today=today,
+            date_range=date_range,
         )
         if frame.empty:
             return "Записів ще немає."
-        lines = [f"Записів: {len(frame)}", "Загалом:"]
-        lines.extend(
-            f"• {amount:,.2f} {currency}"
-            for currency, amount in self.totals(frame).items()
-        )
+        totals = self.totals_by_type(frame)
+        lines = [f"Записів: {len(frame)}"]
+        for currency, kinds in totals.items():
+            net = kinds["income"] - kinds["expense"]
+            lines.append(
+                f"{currency}: Дохід {kinds['income']:,.2f} · "
+                f"Витрати {kinds['expense']:,.2f} · Чистими {net:,.2f}"
+            )
         return "\n".join(lines)
 
     async def build_chart_artifacts(
@@ -171,10 +229,13 @@ class AnalyticsService:
         period: Period | None = None,
         *,
         today: date | None = None,
+        date_range: tuple[date, date] | None = None,
     ) -> ChartArtifacts:
         resolved_period = period or self._config.default_period
         reference = today or datetime.now(ZoneInfo(self._timezone)).date()
-        frame = await self.frame(chat_id, resolved_period, today=reference)
+        frame = await self.frame(
+            chat_id, resolved_period, today=reference, date_range=date_range
+        )
         if frame.empty:
             raise ValueError("No data for chart")
         if not self._config.static_preview and not self._config.interactive_html:
@@ -187,6 +248,7 @@ class AnalyticsService:
                 self._config,
                 resolved_period,
                 reference,
+                date_range,
             ),
             cancelled_result_cleanup=_remove_chart_artifacts,
         )
@@ -256,6 +318,7 @@ def _write_chart_artifacts(
     config: AnalyticsConfig,
     period: Period,
     reference: date,
+    date_range: tuple[date, date] | None = None,
 ) -> ChartArtifacts:
     if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in frame["amount"]):
         raise ValueError("Chart amount exceeds exact display range")
@@ -263,7 +326,7 @@ def _write_chart_artifacts(
     token = uuid4().hex
     png = (
         artifact_directory / f"income-chart-{token}.png"
-        if config.static_preview and period in CHART_PERIODS
+        if config.static_preview and (date_range is not None or period in CHART_PERIODS)
         else None
     )
     html = (
@@ -298,7 +361,7 @@ def _write_chart_artifacts(
             figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
-                render_report_png(frame, period, reference, png)
+                render_report_png(frame, period, reference, png, date_range)
             except Exception as error:
                 if html is None:
                     raise

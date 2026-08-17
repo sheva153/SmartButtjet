@@ -7,8 +7,26 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-Period = Literal["today", "week", "month", "year", "all"]
-CHART_PERIODS: tuple[Period, ...] = ("week", "month", "year")
+Period = Literal[
+    "today",
+    "week",
+    "month",
+    "year",
+    "all",
+    "last_week",
+    "last_month",
+    "last_year",
+]
+CHART_PERIODS: tuple[Period, ...] = (
+    "week",
+    "month",
+    "year",
+    "last_week",
+    "last_month",
+    "last_year",
+)
+
+RecordType = Literal["income", "expense"]
 
 
 def normalize_label(value: str) -> str:
@@ -44,6 +62,7 @@ class ParsedIncome(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str = ""
     income_date: date
+    type: RecordType = "income"
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -73,6 +92,7 @@ class IncomeRecord(BaseModel):
     original_text: str
     amount: Decimal = Field(gt=0)
     currency: str = Field(min_length=3, max_length=3)
+    type: RecordType = "income"
     categories: list[str] = Field(default_factory=lambda: ["other"])
     tags: list[str] = Field(default_factory=list)
     description: str = Field(default="", max_length=1000)
@@ -136,6 +156,37 @@ class ChatSetting(BaseModel):
     enabled: bool = True
     updated_by: int
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ChatGoal(BaseModel):
+    """Per-chat monthly income goal."""
+
+    chat_id: int
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3)
+    updated_by: int
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, value: object) -> str:
+        return _normalize_currency(value)
+
+
+class GoalConfig(BaseModel):
+    """Configuration for monthly income goal pacing."""
+
+    enabled: bool = True
+    after_save_line: bool = True
+    ahead_phrases: list[str] = Field(
+        default_factory=lambda: ["Так тримати! Ти випереджаєш темп 🚀"]
+    )
+    behind_phrases: list[str] = Field(
+        default_factory=lambda: ["Час пришвидшитись — ще все встигаєш 💪"]
+    )
+    reached_phrases: list[str] = Field(
+        default_factory=lambda: ["Ціль досягнута! Ти неймовірна 🎉"]
+    )
 
 
 class FunItem(BaseModel):

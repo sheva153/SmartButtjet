@@ -50,6 +50,12 @@ def income_config() -> IncomeConfig:
     )
 
 
+@pytest.fixture
+def income_service(income_config: IncomeConfig) -> IncomeService:
+    repository = FakeIncomeRepository()
+    return IncomeService(cast(RecordsRepository, repository), income_config)
+
+
 async def test_capture_persists_each_unprotected_amount_sequentially(
     income_config: IncomeConfig,
 ) -> None:
@@ -128,3 +134,15 @@ async def test_capture_returns_existing_deduplicated_records(
 
     assert second == first
     assert len(repository.records) == 1
+
+
+async def test_capture_preserves_expense_type(income_service: IncomeService) -> None:
+    records = await income_service.capture(
+        text="-500 таксі",
+        telegram_message_id=10,
+        chat_id=1,
+        user_id=1,
+        username="u",
+        today=date(2026, 8, 17),
+    )
+    assert records[0].type == "expense"

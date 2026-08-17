@@ -14,7 +14,12 @@ from income_stats.bot.ui import MENU_LABELS, format_success, success_keyboard
 from income_stats.config import AppConfig
 from income_stats.models import IncomeRecord
 from income_stats.parsers import IncomeParseError
-from income_stats.services import AdminService, AnalyticsService, IncomeService
+from income_stats.services import (
+    AdminService,
+    AnalyticsService,
+    GoalService,
+    IncomeService,
+)
 
 income_router = Router(name="income")
 
@@ -26,6 +31,7 @@ async def income_message_handler(
     admin_service: AdminService,
     analytics_service: AnalyticsService,
     app_config: AppConfig,
+    goal_service: GoalService,
     state: FSMContext | None = None,
 ) -> None:
     text = message.text or ""
@@ -46,6 +52,7 @@ async def income_message_handler(
         return
     if not await admin_service.status(message.chat.id):
         return
+    today = datetime.now(ZoneInfo(app_config.bot.timezone)).date()
     try:
         records = await income_service.capture(
             text=text,
@@ -53,7 +60,7 @@ async def income_message_handler(
             chat_id=message.chat.id,
             user_id=user.id,
             username=user.username or "",
-            today=datetime.now(ZoneInfo(app_config.bot.timezone)).date(),
+            today=today,
         )
     except IncomeParseError:
         await message.answer("Некоректна дата. Виправ повідомлення та надішли ще раз.")
@@ -68,11 +75,21 @@ async def income_message_handler(
             currency=record.currency,
         ).info("Income recorded")
 
+    has_income = any(record.type == "income" for record in records)
+    goal_line = (
+        await goal_service.after_save_line(message.chat.id, today=today)
+        if has_income
+        else ""
+    )
+
     async def deliver_reply(record: IncomeRecord) -> None:
-        await message.reply(
-            format_success(record, analytics_service.fun_summary(record)),
-            reply_markup=success_keyboard(record),
-        )
+        is_income = record.type == "income"
+        fun = analytics_service.fun_summary(record) if is_income else ""
+        extra = goal_line if is_income else ""
+        body = format_success(record, fun)
+        if extra:
+            body = f"{body}\n\n{extra}"
+        await message.reply(body, reply_markup=success_keyboard(record))
 
     results = await asyncio.gather(
         *(deliver_reply(record) for record in records),

@@ -28,6 +28,9 @@ PERIOD_TITLES = {
     "week": "Звіт за тиждень",
     "month": "Звіт за місяць",
     "year": "Звіт за рік",
+    "last_week": "Звіт за минулий тиждень",
+    "last_month": "Звіт за минулий місяць",
+    "last_year": "Звіт за минулий рік",
 }
 
 
@@ -36,6 +39,14 @@ def _period_buckets(
     reference: date,
 ) -> tuple[list[str], Callable[[date], int | None]]:
     """Return the x-axis labels and a date→bucket-index mapper for a period."""
+    if period == "last_week":
+        return _period_buckets("week", reference - timedelta(days=7))
+    if period == "last_month":
+        first_this = reference.replace(day=1)
+        return _period_buckets("month", first_this - timedelta(days=1))
+    if period == "last_year":
+        return _period_buckets("year", date(reference.year - 1, 1, 1))
+
     if period == "week":
         start = reference - timedelta(days=reference.weekday())
 
@@ -65,20 +76,61 @@ def _period_buckets(
     raise ValueError(f"Unsupported report period: {period}")
 
 
+def _range_buckets(
+    start: date, end: date
+) -> tuple[list[str], Callable[[date], int | None]]:
+    """Return x-axis labels and a date→bucket-index mapper for an arbitrary range.
+
+    Buckets by day when the span is at most 62 days, otherwise by month.
+    """
+    span = (end - start).days
+    if span <= 62:
+        labels = [
+            (start + timedelta(days=offset)).strftime("%d.%m")
+            for offset in range(span + 1)
+        ]
+
+        def day_index(value: date) -> int | None:
+            delta = (value - start).days
+            return delta if 0 <= delta <= span else None
+
+        return labels, day_index
+
+    months: list[date] = []
+    cursor = start.replace(day=1)
+    while cursor <= end:
+        months.append(cursor)
+        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+    labels = [month.strftime("%m.%Y") for month in months]
+    lookup = {(month.year, month.month): index for index, month in enumerate(months)}
+
+    def month_index(value: date) -> int | None:
+        return lookup.get((value.year, value.month))
+
+    return labels, month_index
+
+
 def _aggregate(
     frame: pd.DataFrame,
     labels: list[str],
     index_of: Callable[[date], int | None],
-) -> dict[str, list[float]]:
-    series: dict[str, list[float]] = {}
-    for income_date, currency, amount in zip(
-        frame["income_date"], frame["currency"], frame["amount"], strict=True
+) -> dict[str, dict[str, list[float]]]:
+    series: dict[str, dict[str, list[float]]] = {}
+    for income_date, currency, amount, kind in zip(
+        frame["income_date"],
+        frame["currency"],
+        frame["amount"],
+        frame["type"],
+        strict=True,
     ):
         bucket = index_of(income_date)
         if bucket is None:
             continue
-        totals = series.setdefault(str(currency), [0.0] * len(labels))
-        totals[bucket] += float(amount)
+        by_kind = series.setdefault(
+            str(currency),
+            {"income": [0.0] * len(labels), "expense": [0.0] * len(labels)},
+        )
+        by_kind[str(kind)][bucket] += float(amount)
     return series
 
 
@@ -87,14 +139,24 @@ def _format_amount(value: float) -> str:
     return text.replace(",", " ")
 
 
+def _legend_label(currency: str, *, income: float, expense: float) -> str:
+    return f"{currency}: +{_format_amount(income)} / −{_format_amount(expense)}"
+
+
 def render_report_png(
     frame: pd.DataFrame,
     period: Period,
     reference: date,
     path: Path,
+    date_range: tuple[date, date] | None = None,
 ) -> None:
-    """Draw a period report bar chart with value and time labels to ``path``."""
-    labels, index_of = _period_buckets(period, reference)
+    """Draw a period (or arbitrary date-range) report bar chart to ``path``."""
+    if date_range is not None:
+        labels, index_of = _range_buckets(*date_range)
+        title = f"Звіт {date_range[0]:%d.%m.%Y}–{date_range[1]:%d.%m.%Y}"
+    else:
+        labels, index_of = _period_buckets(period, reference)
+        title = PERIOD_TITLES[period]
     series = _aggregate(frame, labels, index_of)
     currencies = sorted(series)
 
@@ -106,34 +168,67 @@ def render_report_png(
     group_width = 0.8
     bar_width = group_width / max(1, len(currencies))
     for order, currency in enumerate(currencies):
-        values = series[currency]
+        income = series[currency]["income"]
+        expense = series[currency]["expense"]
         offsets = [
             position - group_width / 2 + bar_width * (order + 0.5)
             for position in positions
         ]
-        bars = axes.bar(offsets, values, width=bar_width, label=currency)
-        for rectangle, value in zip(bars, values, strict=True):
-            if value <= 0:
-                continue
-            axes.annotate(
-                _format_amount(value),
-                (rectangle.get_x() + rectangle.get_width() / 2, value),
-                ha="center",
-                va="bottom",
-                fontsize=8,
-                rotation=90 if len(labels) > 12 else 0,
-            )
+        income_bars = axes.bar(
+            offsets,
+            income,
+            width=bar_width,
+            label=_legend_label(currency, income=sum(income), expense=sum(expense)),
+        )
+        color = income_bars[0].get_facecolor()
+        axes.bar(
+            offsets,
+            [-value for value in expense],
+            width=bar_width,
+            color=color,
+            alpha=0.55,
+            hatch="//",
+        )
+        for offset, up, down in zip(offsets, income, expense, strict=True):
+            if up > 0:
+                axes.annotate(
+                    _format_amount(up),
+                    (offset, up),
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    rotation=90 if len(labels) > 12 else 0,
+                )
+            if down > 0:
+                axes.annotate(
+                    _format_amount(down),
+                    (offset, -down),
+                    ha="center",
+                    va="top",
+                    fontsize=8,
+                    rotation=90 if len(labels) > 12 else 0,
+                )
 
+    axes.axhline(0, color="black", linewidth=0.8)
     axes.set_xticks(list(positions))
     axes.set_xticklabels(labels)
     axes.set_ylabel("Сума")
     axes.margins(y=0.18)
     axes.grid(axis="y", linestyle=":", alpha=0.4)
-    totals = " · ".join(
-        f"{_format_amount(sum(series[currency]))} {currency}" for currency in currencies
-    )
-    axes.set_title(f"{PERIOD_TITLES[period]}\nРазом: {totals or '—'}")
-    if len(currencies) > 1:
+
+    def _subtitle_part(currency: str) -> str:
+        income_total = sum(series[currency]["income"])
+        expense_total = sum(series[currency]["expense"])
+        net_total = income_total - expense_total
+        return (
+            f"{currency} Дохід {_format_amount(income_total)}"
+            f" · Витрати {_format_amount(expense_total)}"
+            f" · Чистими {_format_amount(net_total)}"
+        )
+
+    subtitle = " · ".join(_subtitle_part(currency) for currency in currencies)
+    axes.set_title(f"{title}\n{subtitle or '—'}")
+    if currencies:
         axes.legend(title="Валюта")
     figure.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)

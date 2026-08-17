@@ -9,6 +9,7 @@ import threading
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
@@ -16,11 +17,18 @@ import pandas as pd
 from pydantic import BaseModel
 
 from income_stats.config import StorageConfig
-from income_stats.models import ChatSetting, IncomeRecord, RecordNote, normalize_label
+from income_stats.models import (
+    ChatGoal,
+    ChatSetting,
+    IncomeRecord,
+    RecordNote,
+    normalize_label,
+)
 
 RECORD_COLUMNS = list(IncomeRecord.model_fields)
 NOTE_COLUMNS = list(RecordNote.model_fields)
 CHAT_SETTING_COLUMNS = list(ChatSetting.model_fields)
+GOAL_COLUMNS = list(ChatGoal.model_fields)
 EDITABLE_RECORD_FIELDS = frozenset(
     {
         "amount",
@@ -83,6 +91,16 @@ class RecordsRepository(Protocol):
         updated_by: int,
     ) -> ChatSetting: ...
 
+    async def get_goal(self, chat_id: int) -> ChatGoal | None: ...
+
+    async def set_goal(
+        self,
+        chat_id: int,
+        amount: Decimal,
+        currency: str,
+        updated_by: int,
+    ) -> ChatGoal: ...
+
 
 def _encode_cell(value: object) -> str:
     if isinstance(value, list):
@@ -120,6 +138,7 @@ class CsvRecordsRepository:
         self.records_path = config.records_file
         self.notes_path = config.notes_file
         self.chat_settings_path = config.chat_settings_file
+        self.goals_path = config.goals_file
         self.export_directory = config.export_directory
         self._async_lock = asyncio.Lock()
         self._sync_lock = threading.RLock()
@@ -203,6 +222,10 @@ class CsvRecordsRepository:
             migrated = True
         if "category" in frame.columns:
             frame = cast(pd.DataFrame, frame.drop(columns=["category"]))
+            migrated = True
+
+        if "type" not in frame.columns:
+            frame["type"] = "income"
             migrated = True
 
         missing = set(RECORD_COLUMNS) - set(frame.columns)
@@ -432,6 +455,46 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.chat_settings_path)
             return setting
 
+    def get_goal_sync(self, chat_id: int) -> ChatGoal | None:
+        with self._sync_lock:
+            frame = self._read(self.goals_path, GOAL_COLUMNS)
+            rows = frame[frame["chat_id"] == str(chat_id)]
+            if rows.empty:
+                return None
+            return ChatGoal.model_validate(rows.iloc[-1].to_dict())
+
+    def set_goal_sync(
+        self,
+        chat_id: int,
+        amount: Decimal,
+        currency: str,
+        updated_by: int,
+    ) -> ChatGoal:
+        with self._sync_lock:
+            frame = self._read(self.goals_path, GOAL_COLUMNS)
+            goal = ChatGoal(
+                chat_id=chat_id,
+                amount=amount,
+                currency=currency,
+                updated_by=updated_by,
+            )
+            row = _to_row(goal)
+            indexes = frame.index[frame["chat_id"] == str(chat_id)].tolist()
+            if indexes:
+                frame.loc[indexes[-1], GOAL_COLUMNS] = [
+                    row[column] for column in GOAL_COLUMNS
+                ]
+            else:
+                frame = pd.concat(
+                    [
+                        frame,
+                        pd.DataFrame([row], columns=GOAL_COLUMNS),
+                    ],
+                    ignore_index=True,
+                )
+            self._atomic_write(frame, self.goals_path)
+            return goal
+
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         async with self._async_lock:
             return self.create_record_sync(record)
@@ -484,3 +547,17 @@ class CsvRecordsRepository:
     ) -> ChatSetting:
         async with self._async_lock:
             return self.set_chat_enabled_sync(chat_id, enabled, updated_by)
+
+    async def get_goal(self, chat_id: int) -> ChatGoal | None:
+        async with self._async_lock:
+            return self.get_goal_sync(chat_id)
+
+    async def set_goal(
+        self,
+        chat_id: int,
+        amount: Decimal,
+        currency: str,
+        updated_by: int,
+    ) -> ChatGoal:
+        async with self._async_lock:
+            return self.set_goal_sync(chat_id, amount, currency, updated_by)

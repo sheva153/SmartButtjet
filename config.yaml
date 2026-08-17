@@ -8,6 +8,7 @@ storage:
   notes_file: data/record_notes.csv
   chat_settings_file: data/chat_settings.csv
   export_directory: data/exports
+  goals_file: data/goals.csv
 
 income:
   default_currency: UAH
@@ -24,6 +25,7 @@ income:
     card: [картка, карта, на карту, на картку, card]
     cash: [готівка, готівкою, кеш, cash]
   allow_custom_categories: true
+  expense_markers: [витрата, витратив, витратила, мінус]
 
 permissions:
   everyone_can_edit: true
@@ -37,6 +39,19 @@ analytics:
   # works on this ARM64 server. The portable HTML chart is sent alongside it.
   static_preview: true
   interactive_html: true
+
+goals:
+  enabled: true
+  after_save_line: true
+  ahead_phrases:
+    - "Так тримати! Ти випереджаєш темп 🚀"
+    - "Красиво йдеш — ціль уже близько ✨"
+  behind_phrases:
+    - "Час пришвидшитись — ще все встигаєш 💪"
+    - "Трохи відстаєш, але це поправно 🔧"
+  reached_phrases:
+    - "Ціль досягнута! Ти неймовірна 🎉"
+    - "Місячна планка взята — вітаю! 🏆"
 
 fun_summary:
   enabled: true
@@ -117,16 +132,12 @@ fun_summary:
     burger: {label: "бургерів", emoji: "🍔", price_uah: 150}
     pizza: {label: "піц", emoji: "🍕", price_uah: 300}
     cake: {label: "тортів", emoji: "🍰", price_uah: 650}
-    candy: {label: "цукерок", emoji: "🍬", price_uah: 15}
-    rachky: {label: "цукерок «Рачки»", emoji: "🦞", price_uah: 12}
     fizzy: {label: "пачок шипучки", emoji: "💥", price_uah: 25}
-    cookie: {label: "печеньок", emoji: "🍪", price_uah: 20}
     popcorn: {label: "порцій попкорну", emoji: "🍿", price_uah: 120}
     ice_cream: {label: "порцій морозива", emoji: "🍦", price_uah: 55}
     popsicle: {label: "попсіклів", emoji: "🧊", price_uah: 45}
     cucumber: {label: "огірків", emoji: "🥒", price_uah: 25}
     watermelon: {label: "кавунів", emoji: "🍉", price_uah: 180}
-    banana: {label: "бананів", emoji: "🍌", price_uah: 18}
     potato: {label: "кілограмів картоплі", emoji: "🥔", price_uah: 35}
     dumplings: {label: "порцій пельменів", emoji: "🥟", price_uah: 130}
     noodles: {label: "пачок мівіни", emoji: "🍜", price_uah: 35}
@@ -147,22 +158,27 @@ fun_summary:
     mouse: {label: "комп’ютерних мишок", emoji: "🖱️", price_uah: 700}
     iphone: {label: "айфонів", emoji: "📱", price_uah: 45000, fractional: true}
     tetris: {label: "кишенькових тетрісів", emoji: "🎮", price_uah: 300}
-    skirt: {label: "спідничок", emoji: "👗", price_uah: 800}
-    socks: {label: "пар шкарпеток", emoji: "🧦", price_uah: 120}
+    skirt: {label: "спідничок", emoji: "👗", price_uah: 1200}
+    socks: {label: "пар шкарпеток", emoji: "🧦", price_uah: 220}
     charger: {label: "зарядок, які знову загубляться", emoji: "🔌", price_uah: 350}
-    headphones: {label: "навушників", emoji: "🎧", price_uah: 1000}
-    keyboard: {label: "клавіатур", emoji: "⌨️", price_uah: 1200}
+    headphones: {label: "навушників", emoji: "🎧", price_uah: 1800}
+    keyboard: {label: "клавіатур", emoji: "⌨️", price_uah: 2200}
     flash_drive: {label: "флешок", emoji: "💾", price_uah: 300}
     plant: {label: "вазонів", emoji: "🪴", price_uah: 250}
     toilet_paper: {label: "рулонів туалетного паперу", emoji: "🧻", price_uah: 25}
     candle: {label: "ароматичних свічок", emoji: "🕯️", price_uah: 180}
     rubber_duck: {label: "гумових качечок", emoji: "🦆", price_uah: 50}
-    brick: {label: "цеглин", emoji: "🧱", price_uah: 20}
-    balloon: {label: "повітряних кульок", emoji: "🎈", price_uah: 15}
     plush_frog: {label: "плюшевих жаб", emoji: "🐸", price_uah: 300}
     bucket: {label: "відер", emoji: "🪣", price_uah: 120}
     magnet: {label: "магнітиків на холодильник", emoji: "🧲", price_uah: 60}
     soap: {label: "шматків мила", emoji: "🧼", price_uah: 45}
-    pencil: {label: "олівців", emoji: "✏️", price_uah: 12}
     capybara: {label: "маленьких плюшевих капібар", emoji: "🧸", price_uah: 450}
     disco_ball: {label: "диско-куль", emoji: "🪩", price_uah: 600}
+    console: {label: "ігрових консолей", emoji: "🎮", price_uah: 22000, fractional: true}
+    monitor: {label: "моніторів", emoji: "🖥️", price_uah: 9000, fractional: true}
+    bike: {label: "велосипедів", emoji: "🚲", price_uah: 12000, fractional: true}
+    dinner: {label: "вечерь у ресторані", emoji: "🍽️", price_uah: 900}
+    weekend: {label: "вихідних-подорожей", emoji: "🧳", price_uah: 8000, fractional: true}
+    rent: {label: "місяців оренди", emoji: "🏠", price_uah: 15000, fractional: true}
+    vacuum: {label: "пилососів", emoji: "🧹", price_uah: 6000, fractional: true}
+    course: {label: "онлайн-курсів", emoji: "🎓", price_uah: 5000, fractional: true}

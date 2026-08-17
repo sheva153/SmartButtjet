@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from income_stats.models import IncomeRecord
+from income_stats.models import CHART_PERIODS, IncomeRecord
 
 MENU_RECORDS = "🗂 Записи"
 MENU_ANALYTICS = "📊 Аналітика"
@@ -26,15 +26,24 @@ class ChartPeriod(CallbackData, prefix="chart"):
     period: str
 
 
+CHART_PERIOD_LABELS = {
+    "week": "📅 Тиждень",
+    "month": "🗓 Місяць",
+    "year": "📆 Рік",
+    "last_week": "📅 Мин. тиждень",
+    "last_month": "🗓 Мин. місяць",
+    "last_year": "📆 Мин. рік",
+}
+
+
 def chart_period_keyboard():
     builder = InlineKeyboardBuilder()
-    for label, period in (
-        ("📅 Тиждень", "week"),
-        ("🗓 Місяць", "month"),
-        ("📆 Рік", "year"),
-    ):
-        builder.button(text=label, callback_data=ChartPeriod(period=period))
-    builder.adjust(3)
+    for period in CHART_PERIODS:
+        builder.button(
+            text=CHART_PERIOD_LABELS[period],
+            callback_data=ChartPeriod(period=period),
+        )
+    builder.adjust(3, 3)
     return builder.as_markup()
 
 
@@ -96,12 +105,17 @@ def success_keyboard(record: IncomeRecord):
     return builder.as_markup()
 
 
+def _signed_amount(record: IncomeRecord) -> str:
+    sign = "−" if record.type == "expense" else ""
+    return f"{sign}{record.amount:,.2f}"
+
+
 def records_keyboard(records: Sequence[IncomeRecord], page: int, total_pages: int):
     builder = InlineKeyboardBuilder()
     for record in records:
         builder.button(
             text=(
-                f"{record.income_date:%d.%m} · {record.amount:,.2f} "
+                f"{record.income_date:%d.%m} · {_signed_amount(record)} "
                 f"{record.currency} · {format_labels(record.categories)}"
             )[:64],
             callback_data=RecordAction(action="open", record_id=record.id),
@@ -125,9 +139,10 @@ def records_keyboard(records: Sequence[IncomeRecord], page: int, total_pages: in
 
 
 def format_record(record: IncomeRecord) -> str:
+    label = "Витрата" if record.type == "expense" else "Дохід"
     return (
-        f"✅ Дохід #{short_id(record.id)}\n\n"
-        f"Сума: {record.amount:,.2f} {record.currency}\n"
+        f"✅ {label} #{short_id(record.id)}\n\n"
+        f"Сума: {_signed_amount(record)} {record.currency}\n"
         f"Дата: {record.income_date:%d.%m.%Y}\n"
         f"Категорії: {format_labels(record.categories)}\n"
         f"Теги: {format_labels(record.tags)}\n"
@@ -137,6 +152,6 @@ def format_record(record: IncomeRecord) -> str:
 
 def format_success(record: IncomeRecord, fun: str = "") -> str:
     return (
-        f"✅ Записано {record.amount:,.2f} {record.currency}\n"
+        f"✅ Записано {_signed_amount(record)} {record.currency}\n"
         f"📅 {record.income_date:%d.%m.%Y}\n\n{fun}"
     ).strip()

@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from income_stats.bot.ui import RecordAction, records_keyboard
+from income_stats.bot.ui import RecordAction, format_record, records_keyboard
 from income_stats.config import AppConfig, PermissionsConfig
 from income_stats.handlers import routers
 from income_stats.handlers.records_handler import (
@@ -22,7 +22,7 @@ from income_stats.handlers.records_handler import (
     records_page_callback,
     records_router,
 )
-from income_stats.models import IncomeRecord
+from income_stats.models import IncomeRecord, RecordType
 from income_stats.services import AnalyticsService, RecordPage, RecordsService
 
 
@@ -40,7 +40,9 @@ def test_records_keyboard_contains_only_open_record_buttons() -> None:
     assert "record:open:" in (buttons[0].callback_data or "")
 
 
-def make_record(*, chat_id: int = -100, user_id: int = 7) -> IncomeRecord:
+def make_record(
+    *, chat_id: int = -100, user_id: int = 7, type: RecordType = "income"
+) -> IncomeRecord:
     return IncomeRecord(
         telegram_message_id=1,
         chat_id=chat_id,
@@ -50,7 +52,39 @@ def make_record(*, chat_id: int = -100, user_id: int = 7) -> IncomeRecord:
         currency="UAH",
         income_date=date(2026, 7, 29),
         updated_by=user_id,
+        type=type,
     )
+
+
+def test_format_record_labels_income_without_minus() -> None:
+    card = format_record(make_record(type="income"))
+
+    assert "Дохід" in card
+    assert "Витрата" not in card
+    assert "500.00" in card
+    assert "−" not in card
+
+
+def test_format_record_labels_expense_as_expense_with_minus() -> None:
+    card = format_record(make_record(type="expense"))
+
+    assert "Витрата" in card
+    assert "Дохід" not in card
+    assert "−500.00" in card
+
+
+def test_records_keyboard_shows_minus_for_expense_row() -> None:
+    keyboard = records_keyboard([make_record(type="expense")], page=0, total_pages=1)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert "−500.00" in buttons[0].text
+
+
+def test_records_keyboard_shows_no_minus_for_income_row() -> None:
+    keyboard = records_keyboard([make_record(type="income")], page=0, total_pages=1)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert "−" not in buttons[0].text
 
 
 def make_query(*, chat_id: int = -100, user_id: int = 7) -> SimpleNamespace:
