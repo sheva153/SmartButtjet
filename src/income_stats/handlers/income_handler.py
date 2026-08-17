@@ -78,8 +78,10 @@ async def income_message_handler(
     goal_line = await goal_service.after_save_line(message.chat.id, today=today)
 
     async def deliver_reply(record: IncomeRecord) -> None:
-        extra = goal_line if record.type == "income" else ""
-        body = format_success(record, analytics_service.fun_summary(record))
+        is_income = record.type == "income"
+        fun = analytics_service.fun_summary(record) if is_income else ""
+        extra = goal_line if is_income else ""
+        body = format_success(record, fun)
         if extra:
             body = f"{body}\n\n{extra}"
         await message.reply(body, reply_markup=success_keyboard(record))

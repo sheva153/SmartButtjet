@@ -241,3 +241,53 @@ async def test_expense_reply_has_no_goal_line() -> None:
 
     body = message.reply.await_args.args[0]
     assert "Так тримати! Ти випереджаєш темп 🚀" not in body
+
+
+@pytest.mark.asyncio
+async def test_expense_reply_has_no_fun_summary() -> None:
+    message = SimpleNamespace(
+        text="-500 таксі",
+        from_user=SimpleNamespace(id=7, username="felix", is_bot=False),
+        chat=SimpleNamespace(id=-100),
+        message_id=10,
+        reply=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    income = SimpleNamespace(capture=AsyncMock(return_value=[expense_record()]))
+    admin = SimpleNamespace(status=AsyncMock(return_value=True))
+    analytics = SimpleNamespace(
+        fun_summary=Mock(return_value="цей дохід пасує тобі, можна купити щось миле")
+    )
+
+    await income_message_handler(
+        message, income, admin, analytics, AppConfig(), no_goal_line()
+    )
+
+    body = message.reply.await_args.args[0]
+    assert "можна купити" not in body
+    analytics.fun_summary.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_income_reply_still_includes_fun_summary() -> None:
+    message = SimpleNamespace(
+        text="500 зарплата",
+        from_user=SimpleNamespace(id=7, username="felix", is_bot=False),
+        chat=SimpleNamespace(id=-100),
+        message_id=10,
+        reply=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    income = SimpleNamespace(capture=AsyncMock(return_value=[record()]))
+    admin = SimpleNamespace(status=AsyncMock(return_value=True))
+    analytics = SimpleNamespace(
+        fun_summary=Mock(return_value="цей дохід пасує тобі, можна купити щось миле")
+    )
+
+    await income_message_handler(
+        message, income, admin, analytics, AppConfig(), no_goal_line()
+    )
+
+    body = message.reply.await_args.args[0]
+    assert "можна купити" in body
+    analytics.fun_summary.assert_called_once()
