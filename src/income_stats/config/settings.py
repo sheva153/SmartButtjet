@@ -6,7 +6,12 @@ import yaml
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from income_stats.models.domain import FunSummaryConfig, Period, normalize_label
+from income_stats.models.domain import (
+    FunSummaryConfig,
+    GoalConfig,
+    Period,
+    normalize_label,
+)
 
 
 class BotConfig(BaseModel):
@@ -109,6 +114,7 @@ class AppConfig(BaseModel):
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     fun_summary: FunSummaryConfig = Field(default_factory=FunSummaryConfig)
+    goals: GoalConfig = Field(default_factory=GoalConfig)
 
 
 class Secrets(BaseSettings):

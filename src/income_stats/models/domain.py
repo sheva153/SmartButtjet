@@ -173,6 +173,22 @@ class ChatGoal(BaseModel):
         return _normalize_currency(value)
 
 
+class GoalConfig(BaseModel):
+    """Configuration for monthly income goal pacing."""
+
+    enabled: bool = True
+    after_save_line: bool = True
+    ahead_phrases: list[str] = Field(
+        default_factory=lambda: ["Так тримати! Ти випереджаєш темп 🚀"]
+    )
+    behind_phrases: list[str] = Field(
+        default_factory=lambda: ["Час пришвидшитись — ще все встигаєш 💪"]
+    )
+    reached_phrases: list[str] = Field(
+        default_factory=lambda: ["Ціль досягнута! Ти неймовірна 🎉"]
+    )
+
+
 class FunItem(BaseModel):
     """A purchasable item used in playful income summaries."""
 

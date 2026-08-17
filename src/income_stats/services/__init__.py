@@ -6,6 +6,7 @@ from income_stats.services.analytics_service import (
     ChartArtifacts,
     build_fun_summary,
 )
+from income_stats.services.goal_service import GoalProgress, GoalService
 from income_stats.services.income_service import IncomeService
 from income_stats.services.records_service import (
     EditLocks,
@@ -19,6 +20,8 @@ __all__ = [
     "AnalyticsService",
     "ChartArtifacts",
     "EditLocks",
+    "GoalProgress",
+    "GoalService",
     "IncomeService",
     "RecordField",
     "RecordPage",
