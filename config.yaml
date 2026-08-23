@@ -9,6 +9,7 @@ storage:
   chat_settings_file: data/chat_settings.csv
   export_directory: data/exports
   goals_file: data/goals.csv
+  tags_file: data/tags.csv
 
 income:
   default_currency: UAH
@@ -49,6 +50,7 @@ analytics:
   static_preview: true
   interactive_html: true
   forecast_method: weighted
+  fx_to_uah: {USD: 41, EUR: 45}
 
 goals:
   enabled: true

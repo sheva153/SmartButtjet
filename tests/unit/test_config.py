@@ -29,3 +29,10 @@ def test_forecast_method_and_phrase_tiers_configured() -> None:
     assert config.analytics.forecast_method == "weighted"
     assert len(config.goals.behind_phrases) >= 2
     assert len(config.goals.ahead_phrases) >= 2
+
+
+def test_fx_and_tags_configured() -> None:
+    config = load_config(Path("config.yaml"))
+    assert config.analytics.fx_to_uah["USD"] == 41.0
+    assert config.analytics.fx_to_uah["EUR"] == 45.0
+    assert str(config.storage.tags_file).endswith("tags.csv")
