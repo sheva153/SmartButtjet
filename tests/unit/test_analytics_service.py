@@ -26,7 +26,7 @@ from income_stats.repositories import RecordsRepository
 from income_stats.services import analytics_service as analytics_module
 from income_stats.services import report_chart as report_chart_module
 from income_stats.services.admin_service import AdminService
-from income_stats.services.analytics_service import AnalyticsService
+from income_stats.services.analytics_service import AnalyticsService, build_fun_summary
 from income_stats.utils.files import temporary_artifacts
 
 
@@ -57,6 +57,10 @@ def make_record(
         updated_at=datetime(2026, 7, 29, 10, tzinfo=UTC),
         updated_by=7,
     )
+
+
+def _income(amount: Decimal) -> IncomeRecord:
+    return make_record("record", str(amount))
 
 
 class FakeAnalyticsRepository:
@@ -757,6 +761,21 @@ def test_fun_summary_skips_comparisons_for_foreign_currency() -> None:
     assert service.fun_summary(make_record("record", "500", currency="USD")) == (
         "Красиво!"
     )
+
+
+def test_luxury_item_shows_half_then_whole() -> None:
+    rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
+    cfg = FunSummaryConfig(items={"rolex": rolex}, phrases=["x"])
+    half = build_fun_summary(_income(Decimal("250000")), cfg)  # 0.5*price ≤ amt < price
+    whole = build_fun_summary(_income(Decimal("500000")), cfg)  # amt ≥ price
+    assert "0.5 Rolex" in half
+    assert "1 Rolex" in whole
+
+
+def test_luxury_hidden_below_half_price() -> None:
+    rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
+    cfg = FunSummaryConfig(items={"rolex": rolex}, phrases=["x"])
+    assert "Rolex" not in build_fun_summary(_income(Decimal("100000")), cfg)
 
 
 def test_fun_summary_uses_number_ending() -> None:

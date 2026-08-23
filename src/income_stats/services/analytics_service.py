@@ -586,7 +586,9 @@ def build_fun_summary(
         return "\n".join(lines)
 
     available = [
-        item for item in config.items.values() if record.amount >= item.price_uah
+        item
+        for item in config.items.values()
+        if record.amount >= (item.price_uah / 2 if item.luxury else item.price_uah)
     ]
     if not available:
         return "\n".join([*lines, "Навіть маленький дохід — це плюс до балансу ✨"])
@@ -597,7 +599,12 @@ def build_fun_summary(
     comparisons: list[str] = []
     for item in selected:
         quantity = record.amount / item.price_uah
-        value = f"{quantity:.1f}" if item.fractional else str(int(quantity))
+        if item.luxury:
+            value = "1" if quantity >= 1 else "0.5"
+        elif item.fractional:
+            value = f"{quantity:.1f}"
+        else:
+            value = str(int(quantity))
         comparisons.append(f"{item.emoji} {value} {item.label}")
     return "\n".join(
         [

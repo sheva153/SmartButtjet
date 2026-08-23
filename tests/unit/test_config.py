@@ -12,6 +12,12 @@ def test_basket_has_no_ultra_cheap_items() -> None:
     assert max(prices) >= 20000  # at least one high-tier item present
 
 
+def test_basket_has_luxury_tier() -> None:
+    config = load_config(Path("config.yaml"))
+    assert any(item.luxury for item in config.fun_summary.items.values())
+    assert max(i.price_uah for i in config.fun_summary.items.values()) >= 100000
+
+
 def test_tags_include_purpose_tags() -> None:
     config = load_config(Path("config.yaml"))
     for tag in ("card", "cash", "rent", "dentistry", "health", "transport"):

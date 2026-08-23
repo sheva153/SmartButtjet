@@ -198,6 +198,7 @@ class FunItem(BaseModel):
     emoji: str
     price_uah: Decimal = Field(gt=0)
     fractional: bool = False
+    luxury: bool = False
 
 
 class FunSummaryConfig(BaseModel):
