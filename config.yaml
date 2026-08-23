@@ -48,19 +48,20 @@ analytics:
   # works on this ARM64 server. The portable HTML chart is sent alongside it.
   static_preview: true
   interactive_html: true
+  forecast_method: weighted
 
 goals:
   enabled: true
   after_save_line: true
   ahead_phrases:
-    - "Так тримати! Ти випереджаєш темп 🚀"
-    - "Красиво йдеш — ціль уже близько ✨"
+    - "Чудовий темп! Прогноз каже — ціль буде твоя 🚀"
+    - "Ідеш за графіком, тримай ритм ✨"
   behind_phrases:
-    - "Час пришвидшитись — ще все встигаєш 💪"
-    - "Трохи відстаєш, але це поправно 🔧"
+    - "Прогноз нижчий за ціль — час натиснути сильніше 🔥"
+    - "Ще не дотягуєш до цілі. Піднатужся — кожен запис наближає 💪"
   reached_phrases:
     - "Ціль досягнута! Ти неймовірна 🎉"
-    - "Місячна планка взята — вітаю! 🏆"
+    - "Планку взято — вітаю! 🏆"
 
 fun_summary:
   enabled: true

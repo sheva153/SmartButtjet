@@ -22,3 +22,10 @@ def test_tags_include_purpose_tags() -> None:
     config = load_config(Path("config.yaml"))
     for tag in ("card", "cash", "rent", "dentistry", "health", "transport"):
         assert tag in config.income.tags
+
+
+def test_forecast_method_and_phrase_tiers_configured() -> None:
+    config = load_config(Path("config.yaml"))
+    assert config.analytics.forecast_method == "weighted"
+    assert len(config.goals.behind_phrases) >= 2
+    assert len(config.goals.ahead_phrases) >= 2
