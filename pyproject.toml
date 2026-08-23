@@ -39,6 +39,9 @@ pythonpath = ["src", "."]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+# Design reference scripts and plan/spec docs are illustrative, not shipped
+# source — keep them out of the lint/format gate.
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
