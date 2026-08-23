@@ -395,6 +395,16 @@ def _detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
     ]
 
 
+def detect_tags(text: str, taxonomy: dict[str, list[str]]) -> list[str]:
+    """Detect tag labels whose aliases appear in `text`.
+
+    Thin public wrapper around `_detect_labels` for callers outside parsing
+    (e.g. a retroactive-retagging CLI) that need alias detection without
+    running the full income parse.
+    """
+    return _detect_labels(text, taxonomy)
+
+
 def _income_date(context: _ProtectedContext, current_date: date) -> date:
     if context.absolute_dates:
         return context.absolute_dates[0]
@@ -418,10 +428,15 @@ def _without_spans(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(characters)
 
 
-def _merge_extra_tags(
+def merge_extra_tags(
     tags: dict[str, list[str]],
     extra_tags: dict[str, list[str]] | None,
 ) -> dict[str, list[str]]:
+    """Extend a canonical tag taxonomy with runtime-defined tag aliases.
+
+    Each tag in `extra_tags` extends the same canonical label's alias list
+    (deduped), rather than overwriting the configured taxonomy.
+    """
     if not extra_tags:
         return tags
     merged = {label: list(aliases) for label, aliases in tags.items()}
@@ -470,7 +485,7 @@ def parse_income_message(
         return []
 
     categories = _detect_labels(text, config.categories) or ["other"]
-    tags = _detect_labels(text, _merge_extra_tags(config.tags, extra_tags))
+    tags = _detect_labels(text, merge_extra_tags(config.tags, extra_tags))
     removed_spans = [match.span() for match, _ in candidates]
     removed_spans.extend(
         typo[1]

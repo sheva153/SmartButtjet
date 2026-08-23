@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from income_stats.config import StorageConfig
 from income_stats.models import IncomeRecord, RecordNote
+from income_stats.parsers.income_parser import detect_tags
 from income_stats.repositories.records_repository import (
     GOAL_COLUMNS,
     CsvRecordsRepository,
@@ -526,3 +527,131 @@ async def test_import_records_async_delegates_to_sync(
     assert (added, skipped) == (1, 0)
     listed = await csv_repository.list_records(record.chat_id)
     assert any(item.id == "async-import" for item in listed)
+
+
+def test_list_all_records_sync_optionally_scopes_by_chat(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(id="in-scope", chat_id=-100, telegram_message_id=1)
+    )
+    csv_repository.create_record_sync(
+        make_record(id="other-chat", chat_id=-200, telegram_message_id=2)
+    )
+
+    assert {r.id for r in csv_repository.list_all_records_sync()} == {
+        "in-scope",
+        "other-chat",
+    }
+    assert {r.id for r in csv_repository.list_all_records_sync(chat_id=-100)} == {
+        "in-scope"
+    }
+
+
+def test_retag_records_unions_detected_tags_without_dropping_existing(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(
+            id="needs-tag",
+            telegram_message_id=1,
+            original_text="оплата на картку",
+            tags=[],
+        )
+    )
+    csv_repository.create_record_sync(
+        make_record(
+            id="already-tagged",
+            telegram_message_id=2,
+            original_text="готівкою за каву",
+            tags=["cash"],
+        )
+    )
+    taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
+
+    result = csv_repository.retag_records_sync(taxonomy, detect_tags)
+
+    assert (result.changed, result.total) == (1, 2)
+    listed = {record.id: record for record in csv_repository.list_all_records_sync()}
+    assert listed["needs-tag"].tags == ["card"]
+    assert listed["already-tagged"].tags == ["cash"]
+
+
+def test_retag_records_deltas_report_only_the_net_new_tags(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(
+            id="needs-tag",
+            telegram_message_id=1,
+            original_text="оплата на картку готівкою",
+            tags=["cash"],
+        )
+    )
+    taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
+
+    result = csv_repository.retag_records_sync(taxonomy, detect_tags)
+
+    assert result.changed == 1
+    assert len(result.deltas) == 1
+    (record, added_tags) = result.deltas[0]
+    assert record.id == "needs-tag"
+    assert added_tags == ["card"]
+    assert record.tags == ["cash", "card"]
+
+
+def test_retag_records_returns_zero_changed_when_nothing_to_add(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(telegram_message_id=1, original_text="просто текст")
+    )
+
+    result = csv_repository.retag_records_sync({"card": ["картка"]}, detect_tags)
+
+    assert (result.changed, result.total) == (0, 1)
+    assert result.deltas == []
+
+
+def test_retag_records_is_scoped_to_chat_id(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(
+            id="in-scope",
+            chat_id=-100,
+            telegram_message_id=1,
+            original_text="оплата на картку",
+            tags=[],
+        )
+    )
+    csv_repository.create_record_sync(
+        make_record(
+            id="out-of-scope",
+            chat_id=-200,
+            telegram_message_id=2,
+            original_text="оплата на картку",
+            tags=[],
+        )
+    )
+    taxonomy = {"card": ["картка", "на картку"]}
+
+    result = csv_repository.retag_records_sync(taxonomy, detect_tags, chat_id=-100)
+
+    assert (result.changed, result.total) == (1, 1)
+    listed = {record.id: record for record in csv_repository.list_all_records_sync()}
+    assert listed["in-scope"].tags == ["card"]
+    assert listed["out-of-scope"].tags == []
+
+
+async def test_retag_records_async_delegates_to_sync(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(telegram_message_id=1, original_text="оплата на картку", tags=[])
+    )
+    taxonomy = {"card": ["картка", "на картку"]}
+
+    result = await csv_repository.retag_records(taxonomy, detect_tags)
+
+    assert (result.changed, result.total) == (1, 1)

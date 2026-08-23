@@ -52,6 +52,61 @@ analytics chat_id period="month":
 export chat_id:
     uv run python main.py export --chat-id "{{chat_id}}"
 
+chats:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmd=(uv run python main.py chats)
+    echo "→ ${cmd[*]}" >&2
+    "${cmd[@]}"
+
+records chat_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    chat_id="{{chat_id}}"
+    if [[ -z "$chat_id" && -t 1 ]]; then
+        if command -v gum >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | gum filter --placeholder='select a chat to review' || true)"
+        elif command -v fzf >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | fzf --prompt='chat_id> ' --header='select a chat to review' || true)"
+        else
+            picked=""
+        fi
+        if [[ -n "${picked:-}" ]]; then
+            chat_id="$(awk '{print $1}' <<< "$picked")"
+        fi
+    fi
+    if [[ -n "$chat_id" ]]; then
+        cmd=(uv run python main.py records --chat-id "$chat_id")
+    else
+        cmd=(uv run python main.py records)
+    fi
+    echo "→ ${cmd[*]}" >&2
+    "${cmd[@]}"
+
+retag chat_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    chat_id="{{chat_id}}"
+    if [[ -z "$chat_id" && -t 1 ]]; then
+        if command -v gum >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | gum filter --placeholder='select a chat to retag' || true)"
+        elif command -v fzf >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | fzf --prompt='chat_id> ' --header='select a chat to retag' || true)"
+        else
+            picked=""
+        fi
+        if [[ -n "${picked:-}" ]]; then
+            chat_id="$(awk '{print $1}' <<< "$picked")"
+        fi
+    fi
+    if [[ -n "$chat_id" ]]; then
+        cmd=(uv run python main.py retag --chat-id "$chat_id")
+    else
+        cmd=(uv run python main.py retag)
+    fi
+    echo "→ ${cmd[*]}" >&2
+    "${cmd[@]}"
+
 tmux-setup:
     tmux source-file -n "$HOME/.tmux.conf"
     tmux source-file "$HOME/.tmux.conf"

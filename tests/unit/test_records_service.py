@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -15,6 +15,7 @@ from income_stats.models import (
     TagAlias,
 )
 from income_stats.repositories import RecordNotFoundError
+from income_stats.repositories.records_repository import RetagResult
 from income_stats.services.records_service import (
     EditLockError,
     EditLocks,
@@ -155,6 +156,31 @@ class FakeRecordsRepository:
             self.records[record.id] = record
             added += 1
         return added, skipped
+
+    async def retag_records(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult:
+        scope = [
+            record
+            for record in self.records.values()
+            if chat_id is None or record.chat_id == chat_id
+        ]
+        changed = 0
+        deltas: list[tuple[IncomeRecord, list[str]]] = []
+        for record in scope:
+            detected = detect(record.original_text, taxonomy)
+            added_tags = [tag for tag in detected if tag not in record.tags]
+            if not added_tags:
+                continue
+            updated = record.model_copy(update={"tags": [*record.tags, *added_tags]})
+            self.records[record.id] = updated
+            changed += 1
+            deltas.append((updated, added_tags))
+        return RetagResult(changed=changed, total=len(scope), deltas=deltas)
 
     async def list_tags(self) -> dict[str, list[str]]:
         return dict(self.tags)

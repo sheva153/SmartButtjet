@@ -6,12 +6,12 @@ import asyncio
 import json
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol, cast, runtime_checkable
+from typing import NamedTuple, Protocol, cast, runtime_checkable
 
 import pandas as pd
 from pydantic import BaseModel
@@ -49,6 +49,14 @@ _CSV_READ_ERRORS = (
     pd.errors.ParserError,
     pd.errors.EmptyDataError,
 )
+
+
+class RetagResult(NamedTuple):
+    """Outcome of a bulk retag pass: totals plus each record's added tags."""
+
+    changed: int
+    total: int
+    deltas: list[tuple[IncomeRecord, list[str]]]
 
 
 class RecordNotFoundError(LookupError):
@@ -108,6 +116,14 @@ class RecordsRepository(Protocol):
     ) -> ChatGoal: ...
 
     async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]: ...
+
+    async def retag_records(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult: ...
 
     async def list_tags(self) -> dict[str, list[str]]: ...
 
@@ -378,6 +394,62 @@ class CsvRecordsRepository:
                 self._atomic_write(frame, self.records_path)
             return added, skipped
 
+    def list_all_records_sync(self, chat_id: int | None = None) -> list[IncomeRecord]:
+        """List every record, optionally scoped to one chat.
+
+        Read-only, side-effect free.
+        """
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            if chat_id is not None:
+                frame = frame[frame["chat_id"] == str(chat_id)]
+            return [self._record_from_row(row.to_dict()) for _, row in frame.iterrows()]
+
+    def retag_records_sync(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult:
+        """Retroactively union newly detected tags into existing records.
+
+        `detect` is injected (the parser's `detect_tags`) so this repository
+        never imports the parsing layer. Existing tags are never removed;
+        detected tags are only added, deduped, in encounter order. Every
+        changed row is folded into a single atomic write. The returned
+        deltas list the net-new tags added per changed record, in encounter
+        order, for a caller to report what changed.
+        """
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            scope = (
+                frame if chat_id is None else frame[frame["chat_id"] == str(chat_id)]
+            )
+            total = len(scope)
+            changed = 0
+            deltas: list[tuple[IncomeRecord, list[str]]] = []
+            for index in scope.index:
+                record = self._record_from_row(frame.loc[index].to_dict())
+                detected = [
+                    normalize_label(label)
+                    for label in detect(record.original_text, taxonomy)
+                ]
+                added_tags = [tag for tag in detected if tag not in record.tags]
+                if not added_tags:
+                    continue
+                merged_tags = list(dict.fromkeys([*record.tags, *added_tags]))
+                updated = record.model_copy(update={"tags": merged_tags})
+                row = _to_row(updated)
+                frame.loc[index, RECORD_COLUMNS] = [
+                    row[column] for column in RECORD_COLUMNS
+                ]
+                changed += 1
+                deltas.append((updated, added_tags))
+            if changed:
+                self._atomic_write(frame, self.records_path)
+            return RetagResult(changed=changed, total=total, deltas=deltas)
+
     def update_record_sync(
         self,
         record_id: str,
@@ -623,6 +695,16 @@ class CsvRecordsRepository:
     async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]:
         async with self._async_lock:
             return self.import_records_sync(records)
+
+    async def retag_records(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult:
+        async with self._async_lock:
+            return self.retag_records_sync(taxonomy, detect, chat_id=chat_id)
 
     async def get_record(self, record_id: str) -> IncomeRecord | None:
         async with self._async_lock:
