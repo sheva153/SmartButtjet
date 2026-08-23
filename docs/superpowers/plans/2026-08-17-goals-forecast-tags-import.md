@@ -44,6 +44,7 @@ def test_month_and_year_goals_are_independent(tmp_path):
     assert repo.get_goal_sync(1, "month").amount == Decimal("50000")
     assert repo.get_goal_sync(1, "year").amount == Decimal("600000")
 
+
 def test_legacy_goals_without_period_are_month(tmp_path):
     repo = _repo(tmp_path)
     cols = [c for c in GOAL_COLUMNS if c != "period"]
@@ -112,16 +113,19 @@ git commit -m "feat: period-keyed monthly and yearly goals"
 # tests/unit/test_goal_service.py
 from income_stats.services.goal_service import forecast_total
 
+
 def test_forecast_linear_projects_runrate():
     # 1000 over 10 elapsed days, 30-day period -> 3000
     daily = [Decimal("100")] * 10
     assert forecast_total(daily, 30, "linear") == Decimal("3000")
+
 
 def test_forecast_weighted_favours_recent_days():
     daily = [Decimal("0")] * 9 + [Decimal("100")]  # only last day earned
     linear = forecast_total(daily, 30, "linear")
     weighted = forecast_total(daily, 30, "weighted")
     assert weighted > linear  # recent surge extrapolated stronger
+
 
 def test_forecast_empty_is_zero():
     assert forecast_total([], 30, "weighted") == Decimal()
@@ -132,6 +136,7 @@ async def test_progress_status_off_track_when_forecast_below_goal(goal_service_l
     p = await goal_service_low.progress(1, today=date(2026, 8, 20), period="month")
     assert p.status == "off_track"
     assert p.forecast < p.amount
+
 
 async def test_progress_year_period(goal_service_year):
     p = await goal_service_year.progress(1, today=date(2026, 8, 20), period="year")
@@ -179,31 +184,32 @@ def forecast_total(daily: list[Decimal], total_days: int, method: str) -> Decima
 
 Add `forecast: Decimal` and `period: GoalPeriod` to `GoalProgress`. `GoalService.__init__` gains `forecast_method: str` (store it). Rewrite `progress`:
 ```python
-    async def progress(self, chat_id, *, today, period="month"):
-        goal = await self._repository.get_goal(chat_id, period)
-        if goal is None:
-            return None
-        frame = await self._analytics.frame(chat_id, period, today=today)
-        totals = self._analytics.totals_by_type(frame)
-        actual = totals.get(goal.currency, {}).get("income", Decimal())
-        if period == "year":
-            total_days = 366 if calendar.isleap(today.year) else 365
-            elapsed = today.timetuple().tm_yday
-        else:
-            total_days = calendar.monthrange(today.year, today.month)[1]
-            elapsed = today.day
-        daily = _daily_income(frame, goal.currency, elapsed, today, period)
-        forecast = forecast_total(daily, total_days, self._forecast_method)
-        days_left = max(1, total_days - elapsed)
-        per_day = max(Decimal(), goal.amount - actual) / Decimal(days_left)
-        if actual >= goal.amount:
-            status = "reached"
-        elif forecast >= goal.amount:
-            status = "on_track"
-        else:
-            status = "off_track"
-        return GoalProgress(goal.amount, goal.currency, actual, forecast,
-                            per_day, status, period)
+async def progress(self, chat_id, *, today, period="month"):
+    goal = await self._repository.get_goal(chat_id, period)
+    if goal is None:
+        return None
+    frame = await self._analytics.frame(chat_id, period, today=today)
+    totals = self._analytics.totals_by_type(frame)
+    actual = totals.get(goal.currency, {}).get("income", Decimal())
+    if period == "year":
+        total_days = 366 if calendar.isleap(today.year) else 365
+        elapsed = today.timetuple().tm_yday
+    else:
+        total_days = calendar.monthrange(today.year, today.month)[1]
+        elapsed = today.day
+    daily = _daily_income(frame, goal.currency, elapsed, today, period)
+    forecast = forecast_total(daily, total_days, self._forecast_method)
+    days_left = max(1, total_days - elapsed)
+    per_day = max(Decimal(), goal.amount - actual) / Decimal(days_left)
+    if actual >= goal.amount:
+        status = "reached"
+    elif forecast >= goal.amount:
+        status = "on_track"
+    else:
+        status = "off_track"
+    return GoalProgress(
+        goal.amount, goal.currency, actual, forecast, per_day, status, period
+    )
 ```
 Add `_daily_income(frame, currency, elapsed, today, period) -> list[Decimal]`: bucket the goal-currency income rows by day-of-period into a list of length `elapsed` (index 0 = first day of the period), summing amounts, zero-filled. Map `"ahead"`→`on_track` semantics: `_phrase` keys become `{"reached","on_track","off_track"}` mapped to `reached_phrases`/`ahead_phrases`/`behind_phrases`.
 
@@ -254,36 +260,44 @@ def test_render_includes_forecast_line(goal_progress_factory):
 
 Rewrite `goal_handler` to parse an optional leading period token:
 ```python
-    _PERIOD_ALIASES = {"month": "month", "місяць": "month", "рік": "year", "year": "year"}
-    ...
-    if command.args:
-        parts = command.args.split()
-        period = "month"
-        idx = 0
-        if parts and parts[0].casefold() in _PERIOD_ALIASES:
-            period = _PERIOD_ALIASES[parts[0].casefold()]
-            idx = 1
-        try:
-            amount = Decimal(parts[idx].replace(",", "."))
-        except (InvalidOperation, IndexError):
-            await message.answer("Формат: /goal [month|year] 50000 [UAH]")
-            return
-        currency = parts[idx + 1].upper() if len(parts) > idx + 1 else app_config.income.default_currency
-        if amount <= 0:
-            await message.answer("Ціль має бути більшою за нуль.")
-            return
-        user = message.from_user
-        await repository.set_goal(message.chat.id, amount, currency, user.id if user else 0, period=period)
-        label = "місяць" if period == "month" else "рік"
-        await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/{label}")
+_PERIOD_ALIASES = {"month": "month", "місяць": "month", "рік": "year", "year": "year"}
+...
+if command.args:
+    parts = command.args.split()
+    period = "month"
+    idx = 0
+    if parts and parts[0].casefold() in _PERIOD_ALIASES:
+        period = _PERIOD_ALIASES[parts[0].casefold()]
+        idx = 1
+    try:
+        amount = Decimal(parts[idx].replace(",", "."))
+    except (InvalidOperation, IndexError):
+        await message.answer("Формат: /goal [month|year] 50000 [UAH]")
         return
-    # no args → show both
-    lines = []
-    for period in ("month", "year"):
-        p = await goal_service.progress(message.chat.id, today=today, period=period)
-        if p is not None:
-            lines.append(goal_service.render(p))
-    await message.answer("\n\n".join(lines) if lines else "Ціль ще не задана. Встанови: /goal month 50000")
+    currency = (
+        parts[idx + 1].upper()
+        if len(parts) > idx + 1
+        else app_config.income.default_currency
+    )
+    if amount <= 0:
+        await message.answer("Ціль має бути більшою за нуль.")
+        return
+    user = message.from_user
+    await repository.set_goal(
+        message.chat.id, amount, currency, user.id if user else 0, period=period
+    )
+    label = "місяць" if period == "month" else "рік"
+    await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/{label}")
+    return
+# no args → show both
+lines = []
+for period in ("month", "year"):
+    p = await goal_service.progress(message.chat.id, today=today, period=period)
+    if p is not None:
+        lines.append(goal_service.render(p))
+await message.answer(
+    "\n\n".join(lines) if lines else "Ціль ще не задана. Встанови: /goal month 50000"
+)
 ```
 
 - [ ] **Step 4: render() forecast line**
@@ -331,8 +345,14 @@ git commit -m "feat: /goal month|year command and both-goal progress with foreca
 # tests/unit/test_report_chart.py
 def test_render_draws_goal_and_forecast(tmp_path):
     path = tmp_path / "c.png"
-    render_report_png(_month_frame(), "month", date(2026, 8, 17), path,
-                      goal=Decimal("50000"), forecast=Decimal("42000"))
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        goal=Decimal("50000"),
+        forecast=Decimal("42000"),
+    )
     assert path.exists() and path.stat().st_size > 0
 ```
 
@@ -342,16 +362,26 @@ def test_render_draws_goal_and_forecast(tmp_path):
 
 Add params `goal: Decimal | None = None, forecast: Decimal | None = None`. After the bar loop and `axhline(0)`, before legend:
 ```python
-    if goal is not None:
-        axes.axhline(float(goal), color="#d29922", linewidth=1.4, linestyle="-")
-        axes.annotate(f"🎯 Ціль {_format_amount(float(goal))}",
-                      (len(labels) - 1, float(goal)), ha="right", va="bottom",
-                      fontsize=8, color="#d29922")
-    if forecast is not None:
-        axes.axhline(float(forecast), color="#3fb950", linewidth=1.2, linestyle="--")
-        axes.annotate(f"Прогноз ~{_format_amount(float(forecast))}",
-                      (0, float(forecast)), ha="left", va="bottom",
-                      fontsize=8, color="#3fb950")
+if goal is not None:
+    axes.axhline(float(goal), color="#d29922", linewidth=1.4, linestyle="-")
+    axes.annotate(
+        f"🎯 Ціль {_format_amount(float(goal))}",
+        (len(labels) - 1, float(goal)),
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        color="#d29922",
+    )
+if forecast is not None:
+    axes.axhline(float(forecast), color="#3fb950", linewidth=1.2, linestyle="--")
+    axes.annotate(
+        f"Прогноз ~{_format_amount(float(forecast))}",
+        (0, float(forecast)),
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        color="#3fb950",
+    )
 ```
 
 - [ ] **Step 4: Thread from analytics**
@@ -383,10 +413,16 @@ git commit -m "feat: draw goal and forecast lines on the report chart"
 ```python
 def test_render_includes_tag_breakdown(tmp_path):
     from income_stats.services.report_chart import _tag_label
+
     assert _tag_label("rent").startswith("🏠")
     path = tmp_path / "c.png"
-    render_report_png(_month_frame(), "month", date(2026, 8, 17), path,
-                      tag_totals={"rent": 8000.0, "card": 12000.0})
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        tag_totals={"rent": 8000.0, "card": 12000.0},
+    )
     assert path.exists() and path.stat().st_size > 0
 ```
 
@@ -397,13 +433,20 @@ def test_render_includes_tag_breakdown(tmp_path):
 Add a tag→(emoji,label) map + `_tag_label(tag)`:
 ```python
 _TAG_META = {
-    "card": ("💳", "Картка"), "cash": ("💵", "Готівка"),
-    "rent": ("🏠", "Оренда"), "utilities": ("💡", "Комуналка"),
-    "dentistry": ("🦷", "Стоматологія"), "health": ("🩺", "Медицина"),
-    "groceries": ("🛒", "Продукти"), "transport": ("🚕", "Транспорт"),
-    "cafe": ("☕", "Кафе"), "subscriptions": ("📱", "Підписки"),
+    "card": ("💳", "Картка"),
+    "cash": ("💵", "Готівка"),
+    "rent": ("🏠", "Оренда"),
+    "utilities": ("💡", "Комуналка"),
+    "dentistry": ("🦷", "Стоматологія"),
+    "health": ("🩺", "Медицина"),
+    "groceries": ("🛒", "Продукти"),
+    "transport": ("🚕", "Транспорт"),
+    "cafe": ("☕", "Кафе"),
+    "subscriptions": ("📱", "Підписки"),
     "education": ("🎓", "Освіта"),
 }
+
+
 def _tag_label(tag: str) -> str:
     emoji, name = _TAG_META.get(tag, ("🏷", tag))
     return f"{emoji} {name}"
@@ -489,10 +532,11 @@ git commit -m "feat: expanded multi-tag taxonomy (payment + purpose tags)"
 def test_luxury_item_shows_half_then_whole():
     rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
     cfg = FunSummaryConfig(items={"rolex": rolex}, phrases=["x"])
-    half = build_fun_summary(_income(Decimal("250000")), cfg)   # 0.5*price ≤ amt < price
+    half = build_fun_summary(_income(Decimal("250000")), cfg)  # 0.5*price ≤ amt < price
     whole = build_fun_summary(_income(Decimal("500000")), cfg)  # amt ≥ price
     assert "0.5 Rolex" in half
     assert "1 Rolex" in whole
+
 
 def test_luxury_hidden_below_half_price():
     rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
@@ -515,20 +559,21 @@ def test_basket_has_luxury_tier():
 `FunItem`: add `luxury: bool = False`.
 In `build_fun_summary`, change the availability + quantity logic:
 ```python
-    available = [
-        item for item in config.items.values()
-        if record.amount >= (item.price_uah / 2 if item.luxury else item.price_uah)
-    ]
-    ...
-    for item in selected:
-        quantity = record.amount / item.price_uah
-        if item.luxury:
-            value = "1" if quantity >= 1 else "0.5"
-        elif item.fractional:
-            value = f"{quantity:.1f}"
-        else:
-            value = str(int(quantity))
-        comparisons.append(f"{item.emoji} {value} {item.label}")
+available = [
+    item
+    for item in config.items.values()
+    if record.amount >= (item.price_uah / 2 if item.luxury else item.price_uah)
+]
+...
+for item in selected:
+    quantity = record.amount / item.price_uah
+    if item.luxury:
+        value = "1" if quantity >= 1 else "0.5"
+    elif item.fractional:
+        value = f"{quantity:.1f}"
+    else:
+        value = str(int(quantity))
+    comparisons.append(f"{item.emoji} {value} {item.label}")
 ```
 
 - [ ] **Step 4: config.yaml — raise all prices + luxury items**
@@ -642,7 +687,11 @@ def import_records_sync(self, records: list[IncomeRecord]) -> tuple[int, int]:
         skipped = 0
         new_rows = []
         for record in records:
-            key = (str(record.chat_id), str(record.telegram_message_id), str(record.source_index))
+            key = (
+                str(record.chat_id),
+                str(record.telegram_message_id),
+                str(record.source_index),
+            )
             if key in existing:
                 skipped += 1
                 continue
@@ -650,7 +699,10 @@ def import_records_sync(self, records: list[IncomeRecord]) -> tuple[int, int]:
             new_rows.append(_to_row(record))
             added += 1
         if new_rows:
-            frame = pd.concat([frame, pd.DataFrame(new_rows, columns=RECORD_COLUMNS)], ignore_index=True)
+            frame = pd.concat(
+                [frame, pd.DataFrame(new_rows, columns=RECORD_COLUMNS)],
+                ignore_index=True,
+            )
             self._atomic_write(frame, self.records_path)
         return added, skipped
 ```
