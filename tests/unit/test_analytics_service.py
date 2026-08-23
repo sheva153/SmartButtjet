@@ -12,9 +12,11 @@ from plotly import graph_objects as go
 
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import (
+    ChatGoal,
     ChatSetting,
     FunItem,
     FunSummaryConfig,
+    GoalPeriod,
     IncomeRecord,
     Period,
     RecordNote,
@@ -22,6 +24,7 @@ from income_stats.models import (
 )
 from income_stats.repositories import RecordsRepository
 from income_stats.services import analytics_service as analytics_module
+from income_stats.services import report_chart as report_chart_module
 from income_stats.services.admin_service import AdminService
 from income_stats.services.analytics_service import AnalyticsService
 from income_stats.utils.files import temporary_artifacts
@@ -61,10 +64,23 @@ class FakeAnalyticsRepository:
         self,
         records: list[IncomeRecord],
         notes: list[RecordNote] | None = None,
+        goal: ChatGoal | None = None,
     ) -> None:
         self.records = records
         self.notes = notes or []
         self.enabled = True
+        self.goal = goal
+
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
+        if (
+            self.goal is not None
+            and self.goal.chat_id == chat_id
+            and self.goal.period == period
+        ):
+            return self.goal
+        return None
 
     async def list_records(self, chat_id: int) -> list[IncomeRecord]:
         return [record for record in self.records if record.chat_id == chat_id]
@@ -335,6 +351,85 @@ async def test_chart_builds_png_and_self_contained_html(
     assert first.html is not None and first.html.exists()
     assert "plotly" in first.html.read_text(encoding="utf-8").casefold()
     assert first != second
+
+
+async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository.goal = ChatGoal(
+        chat_id=-100, amount=Decimal("50000"), currency="UAH", updated_by=1
+    )
+    captured: dict[str, tuple[object, ...]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["args"] = args
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    artifacts = await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
+
+    assert artifacts.png is not None and artifacts.png.read_bytes().startswith(
+        b"\x89PNG"
+    )
+    goal_arg, forecast_arg = captured["args"][5], captured["args"][6]
+    assert goal_arg == Decimal("50000")
+    assert forecast_arg is not None
+
+
+async def test_year_chart_without_goal_passes_no_goal_line(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, tuple[object, ...]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["args"] = args
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await analytics_service.build_chart_artifacts(-100, "year", today=date(2026, 7, 29))
+
+    assert captured["args"][5] is None
+    assert captured["args"][6] is None
+
+
+async def test_mixed_currency_month_chart_skips_goal_line_to_avoid_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("uah", "500", currency="UAH"),
+            make_record("usd", "20", currency="USD"),
+        ],
+        goal=ChatGoal(
+            chat_id=-100, amount=Decimal("50000"), currency="UAH", updated_by=1
+        ),
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+    captured: dict[str, tuple[object, ...]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["args"] = args
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await service.build_chart_artifacts(-100, "month", today=date(2026, 7, 29))
+
+    assert captured["args"][5] is None
+    assert captured["args"][6] is None
 
 
 async def test_chart_failure_falls_back_to_html(

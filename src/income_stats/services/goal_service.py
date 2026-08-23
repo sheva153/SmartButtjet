@@ -1,16 +1,18 @@
 """Income goal pacing, driven by a configurable end-of-period forecast."""
 
-import calendar
 import random
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-import pandas as pd
-
 from income_stats.models import GoalConfig, GoalPeriod
 from income_stats.repositories import RecordsRepository
-from income_stats.services.analytics_service import AnalyticsService, forecast_total
+from income_stats.services.analytics_service import (
+    AnalyticsService,
+    daily_income_series,
+    forecast_total,
+    period_span,
+)
 
 _RNG = random.SystemRandom()
 
@@ -48,13 +50,8 @@ class GoalService:
         frame = await self._analytics.frame(chat_id, period, today=today)
         totals = self._analytics.totals_by_type(frame)
         actual = totals.get(goal.currency, {}).get("income", Decimal())
-        if period == "year":
-            total_days = 366 if calendar.isleap(today.year) else 365
-            elapsed = today.timetuple().tm_yday
-        else:
-            total_days = calendar.monthrange(today.year, today.month)[1]
-            elapsed = today.day
-        daily = _daily_income(frame, goal.currency, elapsed, today, period)
+        elapsed, total_days = period_span(period, today)
+        daily = daily_income_series(frame, goal.currency, elapsed, today, period)
         forecast = forecast_total(daily, total_days, self._forecast_method)
         days_left = max(1, total_days - elapsed)
         per_day = max(Decimal(), goal.amount - actual) / Decimal(days_left)
@@ -106,30 +103,3 @@ class GoalService:
             "reached": self._config.reached_phrases,
         }[status]
         return _RNG.choice(pool) if pool else ""
-
-
-def _daily_income(
-    frame: pd.DataFrame,
-    currency: str,
-    elapsed: int,
-    today: date,
-    period: GoalPeriod,
-) -> list[Decimal]:
-    """Bucket goal-currency income rows by day-of-period into a zero-filled list.
-
-    Index 0 is the first day of the period; the list has length `elapsed`.
-    """
-    daily = [Decimal()] * elapsed
-    if frame.empty or elapsed == 0:
-        return daily
-    start = date(today.year, 1, 1) if period == "year" else today.replace(day=1)
-    income_rows = frame.loc[
-        (frame["currency"] == currency) & (frame["type"] == "income")
-    ]
-    for income_date, amount in zip(
-        income_rows["income_date"], income_rows["amount"], strict=True
-    ):
-        index = (income_date - start).days
-        if 0 <= index < elapsed:
-            daily[index] += amount
-    return daily

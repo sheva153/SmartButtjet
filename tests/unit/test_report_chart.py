@@ -219,3 +219,27 @@ def test_render_report_png_uses_range_title(tmp_path: Path) -> None:
         date_range=(date(2026, 8, 17), date(2026, 8, 18)),
     )
     assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def _month_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "income_date": [date(2026, 8, 3), date(2026, 8, 14)],
+            "currency": ["UAH", "UAH"],
+            "amount": [Decimal("1500"), Decimal("2500")],
+            "type": ["income", "income"],
+        }
+    )
+
+
+def test_render_draws_goal_and_forecast(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        goal=Decimal("50000"),
+        forecast=Decimal("42000"),
+    )
+    assert path.exists() and path.stat().st_size > 0

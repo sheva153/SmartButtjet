@@ -1,6 +1,7 @@
 """Analytics, chart, export, and playful-summary use cases."""
 
 import asyncio
+import calendar
 import json
 import random
 import tempfile
@@ -240,6 +241,9 @@ class AnalyticsService:
             raise ValueError("No data for chart")
         if not self._config.static_preview and not self._config.interactive_html:
             raise ValueError("At least one chart format must be enabled")
+        goal_amount, forecast = await self._goal_line(
+            chat_id, resolved_period, reference, date_range, frame
+        )
         return await _run_blocking(
             partial(
                 _write_chart_artifacts,
@@ -249,9 +253,38 @@ class AnalyticsService:
                 resolved_period,
                 reference,
                 date_range,
+                goal_amount,
+                forecast,
             ),
             cancelled_result_cleanup=_remove_chart_artifacts,
         )
+
+    async def _goal_line(
+        self,
+        chat_id: int,
+        period: Period,
+        reference: date,
+        date_range: tuple[date, date] | None,
+        frame: pd.DataFrame,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Look up the chat's goal for a plain month/year chart and forecast it.
+
+        Only a single-currency month/year chart (no ``date_range``) gets a
+        goal/forecast line — a date range has no matching goal period, and a
+        mixed-currency frame would make a single horizontal line ambiguous.
+        """
+        if date_range is not None or period not in ("month", "year"):
+            return None, None
+        goal = await self._repository.get_goal(chat_id, period)
+        if goal is None:
+            return None, None
+        currencies = set(frame["currency"])
+        if len(currencies) != 1 or next(iter(currencies)) != goal.currency:
+            return None, None
+        elapsed, total_days = period_span(period, reference)
+        daily = daily_income_series(frame, goal.currency, elapsed, reference, period)
+        forecast = forecast_total(daily, total_days, self._config.forecast_method)
+        return goal.amount, forecast
 
     async def build_export(self, chat_id: int) -> Path:
         records, notes = await self._repository.export_snapshot(chat_id)
@@ -319,6 +352,8 @@ def _write_chart_artifacts(
     period: Period,
     reference: date,
     date_range: tuple[date, date] | None = None,
+    goal: Decimal | None = None,
+    forecast: Decimal | None = None,
 ) -> ChartArtifacts:
     if any(abs(amount) > _MAX_EXACT_CHART_AMOUNT for amount in frame["amount"]):
         raise ValueError("Chart amount exceeds exact display range")
@@ -361,7 +396,9 @@ def _write_chart_artifacts(
             figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
-                render_report_png(frame, period, reference, png, date_range)
+                render_report_png(
+                    frame, period, reference, png, date_range, goal, forecast
+                )
             except Exception as error:
                 if html is None:
                     raise
@@ -453,6 +490,48 @@ def forecast_total(daily: list[Decimal], total_days: int, method: str) -> Decima
         rate = actual / Decimal(elapsed)
     remaining = max(0, total_days - elapsed)
     return actual + rate * Decimal(remaining)
+
+
+def period_span(period: Period, today: date) -> tuple[int, int]:
+    """Return (elapsed, total_days) for a month/year goal period as of `today`.
+
+    Shared by ``GoalService.progress`` and the chart's goal/forecast line so
+    both compute the exact same pacing window.
+    """
+    if period == "year":
+        total_days = 366 if calendar.isleap(today.year) else 365
+        elapsed = today.timetuple().tm_yday
+    else:
+        total_days = calendar.monthrange(today.year, today.month)[1]
+        elapsed = today.day
+    return elapsed, total_days
+
+
+def daily_income_series(
+    frame: pd.DataFrame,
+    currency: str,
+    elapsed: int,
+    today: date,
+    period: Period,
+) -> list[Decimal]:
+    """Bucket goal-currency income rows by day-of-period into a zero-filled list.
+
+    Index 0 is the first day of the period; the list has length `elapsed`.
+    """
+    daily = [Decimal()] * elapsed
+    if frame.empty or elapsed == 0:
+        return daily
+    start = date(today.year, 1, 1) if period == "year" else today.replace(day=1)
+    income_rows = frame.loc[
+        (frame["currency"] == currency) & (frame["type"] == "income")
+    ]
+    for income_date, amount in zip(
+        income_rows["income_date"], income_rows["amount"], strict=True
+    ):
+        index = (income_date - start).days
+        if 0 <= index < elapsed:
+            daily[index] += amount
+    return daily
 
 
 def build_fun_summary(

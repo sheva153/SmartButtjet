@@ -11,6 +11,7 @@ from __future__ import annotations
 import calendar
 from collections.abc import Callable
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -149,6 +150,8 @@ def render_report_png(
     reference: date,
     path: Path,
     date_range: tuple[date, date] | None = None,
+    goal: Decimal | None = None,
+    forecast: Decimal | None = None,
 ) -> None:
     """Draw a period (or arbitrary date-range) report bar chart to ``path``."""
     if date_range is not None:
@@ -210,6 +213,26 @@ def render_report_png(
                 )
 
     axes.axhline(0, color="black", linewidth=0.8)
+    if goal is not None:
+        axes.axhline(float(goal), color="#d29922", linewidth=1.4, linestyle="-")
+        axes.annotate(
+            f"Ціль {_format_amount(float(goal))}",
+            (len(labels) - 1, float(goal)),
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="#d29922",
+        )
+    if forecast is not None:
+        axes.axhline(float(forecast), color="#3fb950", linewidth=1.2, linestyle="--")
+        axes.annotate(
+            f"Прогноз ~{_format_amount(float(forecast))}",
+            (0, float(forecast)),
+            ha="left",
+            va="bottom",
+            fontsize=8,
+            color="#3fb950",
+        )
     axes.set_xticks(list(positions))
     axes.set_xticklabels(labels)
     axes.set_ylabel("Сума")
@@ -230,6 +253,6 @@ def render_report_png(
     axes.set_title(f"{title}\n{subtitle or '—'}")
     if currencies:
         axes.legend(title="Валюта")
-    figure.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
+    figure.tight_layout()
     figure.savefig(path)
