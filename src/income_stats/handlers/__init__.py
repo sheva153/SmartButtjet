@@ -6,6 +6,7 @@ from income_stats.handlers.goal_handler import goal_router
 from income_stats.handlers.import_handler import import_router
 from income_stats.handlers.income_handler import income_router
 from income_stats.handlers.records_handler import records_router
+from income_stats.handlers.tags_handler import tags_router
 
 routers = (
     records_router,
@@ -13,6 +14,7 @@ routers = (
     analytics_router,
     goal_router,
     import_router,
+    tags_router,
     income_router,
 )
 
@@ -24,4 +26,5 @@ __all__ = [
     "income_router",
     "records_router",
     "routers",
+    "tags_router",
 ]
