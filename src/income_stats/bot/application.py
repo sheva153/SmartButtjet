@@ -27,6 +27,7 @@ BOT_COMMANDS = (
     BotCommand(command="chart", description="Створити діаграму"),
     BotCommand(command="goal", description="Задати або показати ціль доходу"),
     BotCommand(command="export", description="Експортувати записи"),
+    BotCommand(command="import", description="Імпортувати записи з CSV"),
     BotCommand(command="status", description="Стан запису доходів"),
     BotCommand(command="turn_on", description="Увімкнути запис доходів"),
     BotCommand(command="turn_off", description="Вимкнути запис доходів"),
@@ -51,6 +52,7 @@ def build_dispatcher(config: AppConfig) -> Dispatcher:
         fun_summary=config.fun_summary,
     )
     dispatcher = Dispatcher(
+        repository=repository,
         income_service=IncomeService(repository, config.income),
         records_service=RecordsService(
             repository,

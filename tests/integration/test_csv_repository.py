@@ -460,3 +460,40 @@ async def test_async_create_is_serialized_and_deduplicated(
     assert len(listed) == 1
     assert listed[0].categories == ["salary", "debt"]
     assert listed[0].tags == ["card"]
+
+
+def test_import_records_adds_and_dedupes(csv_repository: CsvRecordsRepository) -> None:
+    record = make_record(telegram_message_id=10, source_index=0)
+
+    assert csv_repository.import_records_sync([record]) == (1, 0)
+    assert csv_repository.import_records_sync([record]) == (0, 1)
+
+    listed = csv_repository.list_records_sync(record.chat_id)
+    assert len(listed) == 1
+
+
+def test_import_records_mixes_added_and_skipped(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    existing = csv_repository.create_record_sync(
+        make_record(id="existing", telegram_message_id=1, source_index=0)
+    )
+    fresh = make_record(id="fresh", telegram_message_id=2, source_index=0)
+
+    added, skipped = csv_repository.import_records_sync([existing, fresh])
+
+    assert (added, skipped) == (1, 1)
+    listed = csv_repository.list_records_sync(existing.chat_id)
+    assert {record.id for record in listed} == {"existing", "fresh"}
+
+
+async def test_import_records_async_delegates_to_sync(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    record = make_record(id="async-import", telegram_message_id=20, source_index=0)
+
+    added, skipped = await csv_repository.import_records([record])
+
+    assert (added, skipped) == (1, 0)
+    listed = await csv_repository.list_records(record.chat_id)
+    assert any(item.id == "async-import" for item in listed)

@@ -105,6 +105,8 @@ class RecordsRepository(Protocol):
         period: GoalPeriod = "month",
     ) -> ChatGoal: ...
 
+    async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]: ...
+
 
 def _encode_cell(value: object) -> str:
     if isinstance(value, list):
@@ -330,6 +332,36 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.records_path)
             return record
 
+    def import_records_sync(self, records: list[IncomeRecord]) -> tuple[int, int]:
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            existing = {
+                (row["chat_id"], row["telegram_message_id"], row["source_index"])
+                for _, row in frame.iterrows()
+            }
+            added = 0
+            skipped = 0
+            new_rows = []
+            for record in records:
+                key = (
+                    str(record.chat_id),
+                    str(record.telegram_message_id),
+                    str(record.source_index),
+                )
+                if key in existing:
+                    skipped += 1
+                    continue
+                existing.add(key)
+                new_rows.append(_to_row(record))
+                added += 1
+            if new_rows:
+                frame = pd.concat(
+                    [frame, pd.DataFrame(new_rows, columns=RECORD_COLUMNS)],
+                    ignore_index=True,
+                )
+                self._atomic_write(frame, self.records_path)
+            return added, skipped
+
     def update_record_sync(
         self,
         record_id: str,
@@ -527,6 +559,10 @@ class CsvRecordsRepository:
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         async with self._async_lock:
             return self.create_record_sync(record)
+
+    async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]:
+        async with self._async_lock:
+            return self.import_records_sync(records)
 
     async def get_record(self, record_id: str) -> IncomeRecord | None:
         async with self._async_lock:

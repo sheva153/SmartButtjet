@@ -143,6 +143,17 @@ class FakeRecordsRepository:
         self.goals[chat_id] = goal
         return goal
 
+    async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]:
+        added = 0
+        skipped = 0
+        for record in records:
+            if record.id in self.records:
+                skipped += 1
+                continue
+            self.records[record.id] = record
+            added += 1
+        return added, skipped
+
 
 @pytest.fixture
 def record() -> IncomeRecord:
