@@ -9,10 +9,18 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from income_stats.config import AppConfig
+from income_stats.models import GoalPeriod
 from income_stats.repositories import RecordsRepository
 from income_stats.services import GoalService
 
 goal_router = Router(name="goal")
+
+_PERIOD_ALIASES: dict[str, GoalPeriod] = {
+    "month": "month",
+    "місяць": "month",
+    "рік": "year",
+    "year": "year",
+}
 
 
 @goal_router.message(Command("goal"))
@@ -26,25 +34,38 @@ async def goal_handler(
     today = datetime.now(ZoneInfo(app_config.bot.timezone)).date()
     if command.args:
         parts = command.args.split()
+        period: GoalPeriod = "month"
+        idx = 0
+        if parts and parts[0].casefold() in _PERIOD_ALIASES:
+            period = _PERIOD_ALIASES[parts[0].casefold()]
+            idx = 1
         try:
-            amount = Decimal(parts[0].replace(",", "."))
+            amount = Decimal(parts[idx].replace(",", "."))
         except (InvalidOperation, IndexError):
-            await message.answer("Формат: /goal 50000 [UAH]")
+            await message.answer("Формат: /goal [month|year] 50000 [UAH]")
             return
         currency = (
-            parts[1].upper() if len(parts) > 1 else app_config.income.default_currency
+            parts[idx + 1].upper()
+            if len(parts) > idx + 1
+            else app_config.income.default_currency
         )
         if amount <= 0:
             await message.answer("Ціль має бути більшою за нуль.")
             return
         user = message.from_user
         await repository.set_goal(
-            message.chat.id, amount, currency, user.id if user else 0
+            message.chat.id, amount, currency, user.id if user else 0, period=period
         )
-        await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/місяць")
+        label = "місяць" if period == "month" else "рік"
+        await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/{label}")
         return
-    progress = await goal_service.progress(message.chat.id, today=today)
-    if progress is None:
-        await message.answer("Ціль ще не задана. Встанови: /goal 50000")
-        return
-    await message.answer(goal_service.render(progress))
+    lines = []
+    for period in ("month", "year"):
+        p = await goal_service.progress(message.chat.id, today=today, period=period)
+        if p is not None:
+            lines.append(goal_service.render(p))
+    await message.answer(
+        "\n\n".join(lines)
+        if lines
+        else "Ціль ще не задана. Встанови: /goal month 50000"
+    )

@@ -231,8 +231,9 @@ def test_render_on_track_has_stable_prefix() -> None:
         period="month",
     )
     rendered = service.render(progress)
-    assert rendered.startswith("🎯 Ціль: 30,000 UAH/місяць")
+    assert rendered.startswith("🎯 Ціль (місяць): 30,000 UAH")
     assert "Виконано: 20,000 (67%)" in rendered
+    assert "Прогноз до кінця: ~40,000 (133%)" in rendered
 
 
 def test_render_off_track_includes_per_day_needed() -> None:
@@ -257,3 +258,51 @@ def test_render_off_track_includes_per_day_needed() -> None:
     )
     rendered = service.render(progress)
     assert "Треба ~2,273 UAH/день" in rendered
+
+
+def test_render_includes_forecast_line() -> None:
+    service = GoalService(
+        cast(RecordsRepository, FakeGoalRepository([], None)),
+        AnalyticsService(
+            cast(RecordsRepository, FakeGoalRepository([], None)),
+            AnalyticsConfig(),
+            StorageConfig(export_directory=Path("/tmp")),
+        ),
+        GoalConfig(),
+        "weighted",
+    )
+    progress = GoalProgress(
+        amount=Decimal("30000"),
+        currency="UAH",
+        actual=Decimal("5000"),
+        forecast=Decimal("10000"),
+        per_day_needed=Decimal("2273"),
+        status="off_track",
+        period="month",
+    )
+    rendered = service.render(progress)
+    assert "Прогноз" in rendered
+
+
+def test_render_year_label() -> None:
+    service = GoalService(
+        cast(RecordsRepository, FakeGoalRepository([], None)),
+        AnalyticsService(
+            cast(RecordsRepository, FakeGoalRepository([], None)),
+            AnalyticsConfig(),
+            StorageConfig(export_directory=Path("/tmp")),
+        ),
+        GoalConfig(),
+        "weighted",
+    )
+    progress = GoalProgress(
+        amount=Decimal("300000"),
+        currency="UAH",
+        actual=Decimal("100000"),
+        forecast=Decimal("400000"),
+        per_day_needed=Decimal("0"),
+        status="on_track",
+        period="year",
+    )
+    rendered = service.render(progress)
+    assert rendered.startswith("🎯 Ціль (рік): 300,000 UAH")

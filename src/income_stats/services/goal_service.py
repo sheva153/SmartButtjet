@@ -72,10 +72,17 @@ class GoalService:
         pct = (
             (progress.actual / progress.amount * 100) if progress.amount else Decimal()
         )
+        pct_fc = (
+            (progress.forecast / progress.amount * 100)
+            if progress.amount
+            else Decimal()
+        )
+        label = "місяць" if progress.period == "month" else "рік"
         phrase = self._phrase(progress.status)
         lines = [
-            f"🎯 Ціль: {progress.amount:,.0f} {progress.currency}/місяць",
+            f"🎯 Ціль ({label}): {progress.amount:,.0f} {progress.currency}",
             f"Виконано: {progress.actual:,.0f} ({pct:.0f}%)",
+            f"Прогноз до кінця: ~{progress.forecast:,.0f} ({pct_fc:.0f}%)",
         ]
         if progress.status == "off_track":
             lines.append(
