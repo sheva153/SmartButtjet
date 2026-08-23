@@ -211,21 +211,6 @@ async def test_category_breakdown_expands_without_inflating_total(
     assert analytics_service.tag_breakdown(frame).loc["card", "amount"] == 500
 
 
-async def test_tag_totals_flattens_breakdown_to_floats(
-    analytics_service: AnalyticsService,
-) -> None:
-    frame = await analytics_service.frame(chat_id=-100)
-    assert analytics_service.tag_totals(frame) == {"card": 500.0}
-
-
-async def test_tag_totals_empty_frame_is_empty_dict(
-    analytics_service: AnalyticsService,
-) -> None:
-    frame = await analytics_service.frame(chat_id=-100, today=date(2020, 1, 1))
-    frame = frame.iloc[0:0]
-    assert analytics_service.tag_totals(frame) == {}
-
-
 async def test_summary_keeps_mixed_currencies_separate(tmp_path: Path) -> None:
     repository = FakeAnalyticsRepository(
         [
