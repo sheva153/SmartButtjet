@@ -432,6 +432,29 @@ def _export_frame(
     return pd.DataFrame(rows, columns=list(fields))
 
 
+def forecast_total(daily: list[Decimal], total_days: int, method: str) -> Decimal:
+    """Project an end-of-period total from per-elapsed-day amounts.
+
+    projected = actual + rate * remaining_days, where `rate` (per day) depends
+    on the method. Deterministic; returns Decimal() for an empty/zero series.
+    """
+    elapsed = len(daily)
+    actual = sum(daily, start=Decimal())
+    if elapsed == 0 or actual == 0:
+        return actual
+    if method == "average":
+        window = daily[-7:]
+        rate = sum(window, start=Decimal()) / Decimal(len(window))
+    elif method == "weighted":
+        weights = range(1, elapsed + 1)
+        numer = sum(day * Decimal(w) for day, w in zip(daily, weights, strict=True))
+        rate = numer / Decimal(sum(weights))
+    else:  # linear
+        rate = actual / Decimal(elapsed)
+    remaining = max(0, total_days - elapsed)
+    return actual + rate * Decimal(remaining)
+
+
 def build_fun_summary(
     record: IncomeRecord,
     config: FunSummaryConfig,

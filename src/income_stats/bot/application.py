@@ -57,7 +57,12 @@ def build_dispatcher(config: AppConfig) -> Dispatcher:
             edit_lock_seconds=config.permissions.edit_lock_seconds,
         ),
         analytics_service=analytics_service,
-        goal_service=GoalService(repository, analytics_service, config.goals),
+        goal_service=GoalService(
+            repository,
+            analytics_service,
+            config.goals,
+            config.analytics.forecast_method,
+        ),
         admin_service=AdminService(repository),
         app_config=config,
     )

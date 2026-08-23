@@ -117,9 +117,10 @@ async def test_goal_show_renders_progress() -> None:
         amount=Decimal("50000"),
         currency="UAH",
         actual=Decimal("10000"),
-        expected=Decimal("5000"),
+        forecast=Decimal("5000"),
         per_day_needed=Decimal("100"),
-        status="ahead",
+        status="on_track",
+        period="month",
     )
     goal_service = SimpleNamespace(
         progress=AsyncMock(return_value=progress),

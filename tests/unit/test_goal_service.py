@@ -1,4 +1,4 @@
-"""Tests for GoalService monthly income pacing calculations."""
+"""Tests for GoalService period-keyed pacing and forecast-driven status."""
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -8,9 +8,9 @@ from typing import cast
 import pytest
 
 from income_stats.config import AnalyticsConfig, StorageConfig
-from income_stats.models import ChatGoal, GoalConfig, IncomeRecord
+from income_stats.models import ChatGoal, GoalConfig, GoalPeriod, IncomeRecord
 from income_stats.repositories import RecordsRepository
-from income_stats.services.analytics_service import AnalyticsService
+from income_stats.services.analytics_service import AnalyticsService, forecast_total
 from income_stats.services.goal_service import GoalProgress, GoalService
 
 
@@ -50,8 +50,14 @@ class FakeGoalRepository:
     async def list_records(self, chat_id: int) -> list[IncomeRecord]:
         return [record for record in self.records if record.chat_id == chat_id]
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None:
-        if self.goal is not None and self.goal.chat_id == chat_id:
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
+        if (
+            self.goal is not None
+            and self.goal.chat_id == chat_id
+            and self.goal.period == period
+        ):
             return self.goal
         return None
 
@@ -66,6 +72,7 @@ def build_service(
     tmp_path: Path,
     *,
     config: GoalConfig | None = None,
+    forecast_method: str = "weighted",
 ) -> GoalService:
     repository = as_repository(FakeGoalRepository(records, goal))
     analytics = AnalyticsService(
@@ -74,12 +81,12 @@ def build_service(
         StorageConfig(export_directory=tmp_path),
         timezone="Europe/Kyiv",
     )
-    return GoalService(repository, analytics, config or GoalConfig())
+    return GoalService(repository, analytics, config or GoalConfig(), forecast_method)
 
 
 @pytest.fixture
 def goal_service_seeded(tmp_path: Path) -> GoalService:
-    # goal 30000 UAH; income-to-date 20000 on day 10 of a 31-day month → ahead
+    # goal 30000 UAH; income-to-date 20000 on day 10 of a 31-day month → on_track
     goal = ChatGoal(chat_id=1, amount=Decimal("30000"), currency="UAH", updated_by=7)
     records = [
         make_record("income-1", "12000", date(2026, 8, 3)),
@@ -89,7 +96,7 @@ def goal_service_seeded(tmp_path: Path) -> GoalService:
 
 
 @pytest.fixture
-def goal_service_low_income(tmp_path: Path) -> GoalService:
+def goal_service_low(tmp_path: Path) -> GoalService:
     goal = ChatGoal(chat_id=1, amount=Decimal("30000"), currency="UAH", updated_by=7)
     records = [make_record("income-1", "5000", date(2026, 8, 5))]
     return build_service(records, goal, tmp_path)
@@ -107,19 +114,55 @@ def goal_service_no_goal(tmp_path: Path) -> GoalService:
     return build_service([], None, tmp_path)
 
 
-async def test_progress_ahead(goal_service_seeded: GoalService) -> None:
+@pytest.fixture
+def goal_service_year(tmp_path: Path) -> GoalService:
+    goal = ChatGoal(
+        chat_id=1,
+        period="year",
+        amount=Decimal("300000"),
+        currency="UAH",
+        updated_by=7,
+    )
+    records = [make_record("income-1", "20000", date(2026, 3, 15))]
+    return build_service(records, goal, tmp_path)
+
+
+def test_forecast_linear_projects_runrate() -> None:
+    # 1000 over 10 elapsed days, 30-day period -> 3000
+    daily = [Decimal("100")] * 10
+    assert forecast_total(daily, 30, "linear") == Decimal("3000")
+
+
+def test_forecast_weighted_favours_recent_days() -> None:
+    daily = [Decimal("0")] * 9 + [Decimal("100")]  # only last day earned
+    linear = forecast_total(daily, 30, "linear")
+    weighted = forecast_total(daily, 30, "weighted")
+    assert weighted > linear  # recent surge extrapolated stronger
+
+
+def test_forecast_empty_is_zero() -> None:
+    assert forecast_total([], 30, "weighted") == Decimal()
+
+
+async def test_progress_on_track(goal_service_seeded: GoalService) -> None:
     progress = await goal_service_seeded.progress(1, today=date(2026, 8, 10))
     assert progress is not None
-    assert progress.status == "ahead"
+    assert progress.status == "on_track"
     assert progress.actual == Decimal("20000")
     assert progress.amount == Decimal("30000")
     assert progress.currency == "UAH"
+    assert progress.period == "month"
 
 
-async def test_progress_behind(goal_service_low_income: GoalService) -> None:
-    progress = await goal_service_low_income.progress(1, today=date(2026, 8, 20))
+async def test_progress_status_off_track_when_forecast_below_goal(
+    goal_service_low: GoalService,
+) -> None:
+    progress = await goal_service_low.progress(
+        1, today=date(2026, 8, 20), period="month"
+    )
     assert progress is not None
-    assert progress.status == "behind"
+    assert progress.status == "off_track"
+    assert progress.forecast < progress.amount
     assert progress.per_day_needed > 0
 
 
@@ -127,6 +170,14 @@ async def test_reached(goal_service_reached: GoalService) -> None:
     progress = await goal_service_reached.progress(1, today=date(2026, 8, 20))
     assert progress is not None
     assert progress.status == "reached"
+
+
+async def test_progress_year_period(goal_service_year: GoalService) -> None:
+    progress = await goal_service_year.progress(
+        1, today=date(2026, 8, 20), period="year"
+    )
+    assert progress is not None
+    assert progress.period == "year"
 
 
 async def test_progress_none_without_goal(goal_service_no_goal: GoalService) -> None:
@@ -159,7 +210,7 @@ async def test_after_save_line_returns_phrase_when_goal_present(
     assert line == "Ціль досягнута! Ти неймовірна 🎉"
 
 
-def test_render_ahead_has_stable_prefix() -> None:
+def test_render_on_track_has_stable_prefix() -> None:
     service = GoalService(
         cast(RecordsRepository, FakeGoalRepository([], None)),
         AnalyticsService(
@@ -168,21 +219,23 @@ def test_render_ahead_has_stable_prefix() -> None:
             StorageConfig(export_directory=Path("/tmp")),
         ),
         GoalConfig(),
+        "weighted",
     )
     progress = GoalProgress(
         amount=Decimal("30000"),
         currency="UAH",
         actual=Decimal("20000"),
-        expected=Decimal("9677"),
+        forecast=Decimal("40000"),
         per_day_needed=Decimal("0"),
-        status="ahead",
+        status="on_track",
+        period="month",
     )
     rendered = service.render(progress)
     assert rendered.startswith("🎯 Ціль: 30,000 UAH/місяць")
     assert "Виконано: 20,000 (67%)" in rendered
 
 
-def test_render_behind_includes_per_day_needed() -> None:
+def test_render_off_track_includes_per_day_needed() -> None:
     service = GoalService(
         cast(RecordsRepository, FakeGoalRepository([], None)),
         AnalyticsService(
@@ -191,14 +244,16 @@ def test_render_behind_includes_per_day_needed() -> None:
             StorageConfig(export_directory=Path("/tmp")),
         ),
         GoalConfig(),
+        "weighted",
     )
     progress = GoalProgress(
         amount=Decimal("30000"),
         currency="UAH",
         actual=Decimal("5000"),
-        expected=Decimal("19355"),
+        forecast=Decimal("10000"),
         per_day_needed=Decimal("2273"),
-        status="behind",
+        status="off_track",
+        period="month",
     )
     rendered = service.render(progress)
     assert "Треба ~2,273 UAH/день" in rendered

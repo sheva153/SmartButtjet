@@ -1,6 +1,7 @@
 """Typed application configuration loaded from YAML and environment variables."""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
@@ -105,6 +106,7 @@ class AnalyticsConfig(BaseModel):
     default_period: Period = "month"
     static_preview: bool = True
     interactive_html: bool = True
+    forecast_method: Literal["linear", "average", "weighted"] = "weighted"
 
 
 class AppConfig(BaseModel):
