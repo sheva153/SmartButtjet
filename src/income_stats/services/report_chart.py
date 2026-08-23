@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
+from matplotlib import colormaps
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
@@ -144,6 +145,26 @@ def _legend_label(currency: str, *, income: float, expense: float) -> str:
     return f"{currency}: +{_format_amount(income)} / −{_format_amount(expense)}"
 
 
+_TAG_LABELS = {
+    "card": "Картка",
+    "cash": "Готівка",
+    "rent": "Оренда",
+    "utilities": "Комуналка",
+    "dentistry": "Стоматологія",
+    "health": "Медицина",
+    "groceries": "Продукти",
+    "transport": "Транспорт",
+    "cafe": "Кафе",
+    "subscriptions": "Підписки",
+    "education": "Освіта",
+}
+
+
+def _tag_label(tag: str) -> str:
+    """Return the plain Ukrainian display name for a tag (no emoji glyphs)."""
+    return _TAG_LABELS.get(tag, tag)
+
+
 def render_report_png(
     frame: pd.DataFrame,
     period: Period,
@@ -152,6 +173,7 @@ def render_report_png(
     date_range: tuple[date, date] | None = None,
     goal: Decimal | None = None,
     forecast: Decimal | None = None,
+    tag_totals: dict[str, float] | None = None,
 ) -> None:
     """Draw a period (or arbitrary date-range) report bar chart to ``path``."""
     if date_range is not None:
@@ -164,9 +186,16 @@ def render_report_png(
     currencies = sorted(series)
 
     positions = range(len(labels))
-    figure = Figure(figsize=(max(8.0, len(labels) * 0.5), 5.0), dpi=150)
+    has_tags = bool(tag_totals)
+    figure = Figure(
+        figsize=(max(8.0, len(labels) * 0.5), 6.5 if has_tags else 5.0), dpi=150
+    )
     FigureCanvasAgg(figure)
-    axes = figure.subplots()
+    if has_tags:
+        axes, tag_axes = figure.subplots(2, 1, height_ratios=[3, 1])
+    else:
+        axes = figure.subplots()
+        tag_axes = None
 
     group_width = 0.8
     bar_width = group_width / max(1, len(currencies))
@@ -253,6 +282,30 @@ def render_report_png(
     axes.set_title(f"{title}\n{subtitle or '—'}")
     if currencies:
         axes.legend(title="Валюта")
+
+    if tag_axes is not None and tag_totals:
+        tags = sorted(tag_totals, key=lambda tag: tag_totals[tag], reverse=True)
+        values = [tag_totals[tag] for tag in tags]
+        positions_tags = range(len(tags))
+        cmap = colormaps["tab20"]
+        colors = [cmap(index % cmap.N) for index in positions_tags]
+        tag_axes.barh(list(positions_tags), values, color=colors)
+        tag_axes.set_yticks(list(positions_tags))
+        tag_axes.set_yticklabels([_tag_label(tag) for tag in tags])
+        tag_axes.invert_yaxis()
+        tag_axes.set_xlabel("Сума за тегами")
+        tag_axes.grid(axis="x", linestyle=":", alpha=0.4)
+        for position, value in zip(positions_tags, values, strict=True):
+            tag_axes.annotate(
+                _format_amount(value),
+                (value, position),
+                ha="left",
+                va="center",
+                fontsize=8,
+                xytext=(4, 0),
+                textcoords="offset points",
+            )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.tight_layout()
     figure.savefig(path)

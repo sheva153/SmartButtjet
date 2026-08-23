@@ -207,6 +207,21 @@ async def test_category_breakdown_expands_without_inflating_total(
     assert analytics_service.tag_breakdown(frame).loc["card", "amount"] == 500
 
 
+async def test_tag_totals_flattens_breakdown_to_floats(
+    analytics_service: AnalyticsService,
+) -> None:
+    frame = await analytics_service.frame(chat_id=-100)
+    assert analytics_service.tag_totals(frame) == {"card": 500.0}
+
+
+async def test_tag_totals_empty_frame_is_empty_dict(
+    analytics_service: AnalyticsService,
+) -> None:
+    frame = await analytics_service.frame(chat_id=-100, today=date(2020, 1, 1))
+    frame = frame.iloc[0:0]
+    assert analytics_service.tag_totals(frame) == {}
+
+
 async def test_summary_keeps_mixed_currencies_separate(tmp_path: Path) -> None:
     repository = FakeAnalyticsRepository(
         [
@@ -379,6 +394,26 @@ async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
     goal_arg, forecast_arg = captured["args"][5], captured["args"][6]
     assert goal_arg == Decimal("50000")
     assert forecast_arg is not None
+
+
+async def test_chart_threads_tag_totals_into_png(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, tuple[object, ...]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["args"] = args
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
+
+    assert captured["args"][7] == {"card": 500.0}
 
 
 async def test_year_chart_without_goal_passes_no_goal_line(

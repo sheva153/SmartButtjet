@@ -198,6 +198,22 @@ class AnalyticsService:
     def tag_breakdown(cls, frame: pd.DataFrame) -> pd.DataFrame:
         return cls._label_breakdown(frame, "tags")
 
+    @classmethod
+    def tag_totals(cls, frame: pd.DataFrame) -> dict[str, float]:
+        """Flatten :meth:`tag_breakdown` to ``{tag: amount}`` for the chart.
+
+        Multi-currency frames sum across currencies into one bar per tag;
+        single-currency deployments (the norm) are unaffected by the sum.
+        """
+        breakdown = cls.tag_breakdown(frame)
+        if breakdown.empty:
+            return {}
+        totals: dict[str, float] = {}
+        for index, amount in breakdown["amount"].items():
+            tag = index[0] if isinstance(index, tuple) else index
+            totals[str(tag)] = totals.get(str(tag), 0.0) + float(cast(Decimal, amount))
+        return totals
+
     async def summary(
         self,
         chat_id: int,
@@ -396,8 +412,16 @@ def _write_chart_artifacts(
             figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
+                tag_totals = AnalyticsService.tag_totals(frame)
                 render_report_png(
-                    frame, period, reference, png, date_range, goal, forecast
+                    frame,
+                    period,
+                    reference,
+                    png,
+                    date_range,
+                    goal,
+                    forecast,
+                    tag_totals,
                 )
             except Exception as error:
                 if html is None:

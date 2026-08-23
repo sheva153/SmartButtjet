@@ -243,3 +243,66 @@ def test_render_draws_goal_and_forecast(tmp_path: Path) -> None:
         forecast=Decimal("42000"),
     )
     assert path.exists() and path.stat().st_size > 0
+
+
+def test_tag_label_is_plain_ukrainian_text() -> None:
+    from income_stats.services.report_chart import _tag_label
+
+    assert _tag_label("rent") == "Оренда"
+    assert _tag_label("card") == "Картка"
+
+
+def test_tag_label_falls_back_to_raw_tag() -> None:
+    from income_stats.services.report_chart import _tag_label
+
+    assert _tag_label("unknown-tag") == "unknown-tag"
+
+
+def test_render_includes_tag_breakdown(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        tag_totals={"rent": 8000.0, "card": 12000.0},
+    )
+    assert path.exists() and path.stat().st_size > 0
+
+
+def test_render_report_png_no_warning_with_tag_breakdown(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render_report_png(
+            _month_frame(),
+            "month",
+            date(2026, 8, 17),
+            path,
+            tag_totals={"rent": 8000.0, "card": 12000.0},
+        )
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_omits_tag_section_when_empty(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        tag_totals={},
+    )
+    assert path.exists() and path.stat().st_size > 0
+
+
+def test_render_omits_tag_section_when_none(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(
+        _month_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        tag_totals=None,
+    )
+    assert path.exists() and path.stat().st_size > 0
