@@ -306,3 +306,11 @@ def test_render_omits_tag_section_when_none(tmp_path: Path) -> None:
         tag_totals=None,
     )
     assert path.exists() and path.stat().st_size > 0
+
+
+def test_to_uah_converts_by_rate() -> None:
+    from income_stats.services.report_chart import to_uah
+
+    assert to_uah(Decimal("100"), "USD", {"USD": 41.0}) == Decimal("4100")
+    assert to_uah(Decimal("100"), "UAH", {"USD": 41.0}) == Decimal("100")
+    assert to_uah(Decimal("100"), "GBP", {"USD": 41.0}) == Decimal("100")

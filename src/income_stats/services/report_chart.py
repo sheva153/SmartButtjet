@@ -136,6 +136,10 @@ def _aggregate(
     return series
 
 
+def to_uah(amount: Decimal, currency: str, fx: dict[str, float]) -> Decimal:
+    return amount * Decimal(str(fx.get(currency, 1)))
+
+
 def _format_amount(value: float) -> str:
     text = f"{int(round(value)):,}" if value == int(value) else f"{value:,.2f}"
     return text.replace(",", " ")

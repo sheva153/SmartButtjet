@@ -107,6 +107,9 @@ class AnalyticsConfig(BaseModel):
     static_preview: bool = True
     interactive_html: bool = True
     forecast_method: Literal["linear", "average", "weighted"] = "weighted"
+    fx_to_uah: dict[str, float] = Field(
+        default_factory=lambda: {"USD": 41.0, "EUR": 45.0}
+    )
 
 
 class AppConfig(BaseModel):
