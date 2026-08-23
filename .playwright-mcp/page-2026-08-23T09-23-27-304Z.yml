@@ -1,0 +1,96 @@
+- generic [ref=f1e2]:
+  - heading "Демо нової діаграми — теги-кольори, валюта-візерунки" [level=1] [ref=f1e3]
+  - paragraph [ref=f1e4]:
+    - text: Прототип рендера. Це не в боті — приклад, щоб ти підтвердив вигляд перед портуванням у
+    - code [ref=f1e5]: report_chart.py
+    - text: .
+  - heading "Як це працює" [level=2] [ref=f1e6]
+  - list [ref=f1e7]:
+    - listitem [ref=f1e8]: Колір = тег. Кожен тег має свій колір. Запис із кількома тегами → його стовпчик поділено на кілька рівних кольорових смуг.
+    - listitem [ref=f1e9]:
+      - text: Візерунок = валюта. ₴ — суцільний, $ —
+      - code [ref=f1e10]: //
+      - text: ", € —"
+      - code [ref=f1e11]: ..
+      - text: .
+    - listitem [ref=f1e12]: Висота = ₴-еквівалент. USD/EUR переводяться в гривню (×41 / ×45) лише для висоти; валюта далі видима через візерунок.
+    - listitem [ref=f1e13]: Дохід — вгору, витрата — вниз; записи одного дня стосуються один на одного (stacked).
+    - listitem [ref=f1e14]: "Легенда згрупована: окремо «Теги» (кольори), окремо «Валюта» (візерунки)."
+  - heading "Діаграма" [level=2] [ref=f1e15]
+  - img "tag chart demo" [ref=f1e16]
+  - heading "Записи прикладу" [level=2] [ref=f1e17]
+  - table [ref=f1e18]:
+    - rowgroup [ref=f1e19]:
+      - row [ref=f1e20]:
+        - columnheader "День" [ref=f1e21]
+        - columnheader "Тип" [ref=f1e22]
+        - columnheader "Сума" [ref=f1e23]
+        - columnheader "₴-екв" [ref=f1e24]
+        - columnheader "Теги" [ref=f1e25]
+      - row [ref=f1e26]:
+        - cell "Пн" [ref=f1e27]
+        - cell "дохід" [ref=f1e28]
+        - cell "20 000 UAH" [ref=f1e29]
+        - cell "20 000 ₴" [ref=f1e30]
+        - cell "Зарплата, Картка" [ref=f1e31]
+      - row [ref=f1e32]:
+        - cell "Пн" [ref=f1e33]
+        - cell "витрата" [ref=f1e34]
+        - cell "8 000 UAH" [ref=f1e35]
+        - cell "8 000 ₴" [ref=f1e36]
+        - cell "Оренда, Картка" [ref=f1e37]
+      - row [ref=f1e38]:
+        - cell "Вт" [ref=f1e39]
+        - cell "дохід" [ref=f1e40]
+        - cell "300 USD" [ref=f1e41]
+        - cell "12 300 ₴" [ref=f1e42]
+        - cell "Фриланс, Картка" [ref=f1e43]
+      - row [ref=f1e44]:
+        - cell "Ср" [ref=f1e45]
+        - cell "витрата" [ref=f1e46]
+        - cell "1 200 UAH" [ref=f1e47]
+        - cell "1 200 ₴" [ref=f1e48]
+        - cell "Продукти, Готівка" [ref=f1e49]
+      - row [ref=f1e50]:
+        - cell "Ср" [ref=f1e51]
+        - cell "витрата" [ref=f1e52]
+        - cell "500 UAH" [ref=f1e53]
+        - cell "500 ₴" [ref=f1e54]
+        - cell "Кафе, Картка" [ref=f1e55]
+      - row [ref=f1e56]:
+        - cell "Чт" [ref=f1e57]
+        - cell "дохід" [ref=f1e58]
+        - cell "200 EUR" [ref=f1e59]
+        - cell "9 000 ₴" [ref=f1e60]
+        - cell "Консалтинг, Картка" [ref=f1e61]
+      - row [ref=f1e62]:
+        - cell "Пт" [ref=f1e63]
+        - cell "дохід" [ref=f1e64]
+        - cell "4 000 UAH" [ref=f1e65]
+        - cell "4 000 ₴" [ref=f1e66]
+        - cell "Продажі, Готівка" [ref=f1e67]
+      - row [ref=f1e68]:
+        - cell "Пт" [ref=f1e69]
+        - cell "витрата" [ref=f1e70]
+        - cell "900 UAH" [ref=f1e71]
+        - cell "900 ₴" [ref=f1e72]
+        - cell "Стоматологія" [ref=f1e73]
+      - row [ref=f1e74]:
+        - cell "Сб" [ref=f1e75]
+        - cell "витрата" [ref=f1e76]
+        - cell "1 500 UAH" [ref=f1e77]
+        - cell "1 500 ₴" [ref=f1e78]
+        - cell "Транспорт, Готівка" [ref=f1e79]
+      - row [ref=f1e80]:
+        - cell "Сб" [ref=f1e81]
+        - cell "дохід" [ref=f1e82]
+        - cell "1 000 UAH" [ref=f1e83]
+        - cell "1 000 ₴" [ref=f1e84]
+        - cell "—" [ref=f1e85]
+      - row [ref=f1e86]:
+        - cell "Нд" [ref=f1e87]
+        - cell "дохід" [ref=f1e88]
+        - cell "150 USD" [ref=f1e89]
+        - cell "6 150 ₴" [ref=f1e90]
+        - cell "Подарунок, Картка" [ref=f1e91]
+  - paragraph [ref=f1e92]: "Питання до тебе: (1) курс USD 41 / EUR 45 — ок? (2) багатотеговий запис ділити на рівні смуги (як тут) — ок? (3) без тегів → сірий «Без тегу» — ок?"

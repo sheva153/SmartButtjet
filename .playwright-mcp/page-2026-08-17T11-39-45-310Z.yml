@@ -1,0 +1,193 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - group [ref=e4]:
+      - generic "⬇︎ HTML" [ref=e5] [cursor=pointer]
+    - button "🇺🇦 UA" [ref=e6] [cursor=pointer]
+    - button "☀︎" [ref=e7] [cursor=pointer]
+  - 'heading "Where PR #3''s time went" [level=1] [ref=e8]'
+  - paragraph [ref=e9]: feature/expenses-goals-reports · SmartButtjet · 2026-08-17
+  - generic [ref=e10]:
+    - paragraph [ref=e11]:
+      - strong [ref=e12]: Shipped.
+      - generic [ref=e13]:
+        - text: "PR #3 open and green — 13 TDD tasks + a final cross-cutting fix, 17 commits off"
+        - code [ref=e14]: origin/main
+        - text: ", 342 tests, 0 warnings. The headline correctness bug (an expense rendered as «Дохід» on the record card) was caught by the whole-branch review before merge, not by a user."
+    - paragraph [ref=e15]:
+      - generic [ref=e16]:
+        - text: "Calendar span 4 h 19 min — and since no inter-commit gap exceeds 2 h, that is essentially 4 h 19 min of continuous work. Git shows a 6% fix-ratio, but that understates corrections: per-task fix-rounds were"
+        - code [ref=e17]: "--amend"
+        - text: ed into their commits.
+  - heading "The facts" [level=2] [ref=e18]
+  - generic [ref=e19]:
+    - table [ref=e21]:
+      - rowgroup [ref=e22]:
+        - row [ref=e23]:
+          - cell "Branch" [ref=e24]
+          - cell [ref=e25]:
+            - code [ref=e26]: feature/expenses-goals-reports
+        - row [ref=e27]:
+          - cell "PR" [ref=e28]
+          - cell [ref=e29]:
+            - link "#3" [ref=e30] [cursor=pointer]:
+              - /url: https://github.com/sheva153/SmartButtjet/pull/3
+            - text: · OPEN · MERGEABLE
+        - row [ref=e31]:
+          - cell "Base" [ref=e32]
+          - cell [ref=e33]:
+            - code [ref=e34]: origin/main
+            - text: "@"
+            - code [ref=e35]: 511f7b6
+        - row [ref=e36]:
+          - cell "Commits" [ref=e37]
+          - cell "17 (13 feat · 2 docs · 1 fix · 1 refactor)" [ref=e38]
+        - row [ref=e39]:
+          - cell "Diff" [ref=e40]
+          - cell "37 files · +3432 / −103" [ref=e41]
+        - row [ref=e42]:
+          - cell "Tests" [ref=e43]
+          - cell "342 passed · 0 warnings · ruff+pyright clean" [ref=e44]
+    - table [ref=e46]:
+      - rowgroup [ref=e47]:
+        - row [ref=e48]:
+          - cell "First commit" [ref=e49]
+          - cell "2026-08-17 10:09 (Kyiv)" [ref=e50]
+        - row [ref=e51]:
+          - cell "Last commit" [ref=e52]
+          - cell "14:29 (Kyiv)" [ref=e53]
+        - row [ref=e54]:
+          - cell "Calendar span" [ref=e55]
+          - cell "4 h 19 min" [ref=e56]
+        - row [ref=e57]:
+          - cell "Actual work" [ref=e58]
+          - cell "4 h 19 min" [ref=e59]
+        - row [ref=e60]:
+          - cell "Method" [ref=e61]
+          - 'cell "subagent-driven: 1 impl + review per task" [ref=e62]'
+        - row [ref=e63]:
+          - cell "Model mix" [ref=e64]
+          - cell "haiku (transcription) · sonnet (impl/review) · opus (final review)" [ref=e65]
+  - paragraph [ref=e66]: Commit timestamps are a proxy for effort, not a timesheet. Cherry-picked commits (T9, T12) keep their original author dates, so log order is not strictly chronological — the timing above sorts by epoch.
+  - heading "The one bug that would have shipped" [level=2] [ref=e67]
+  - generic [ref=e68]: "ParsedIncome.type ─ correct ──► IncomeRecord.type ─ correct ──► CSV ─ correct ──► analytics ─ correct │ every per-task review passed ✓ ▼ bot/ui.format_record() ── hardcoded \"✅ Дохід #id\" │ never read record.type user opens an expense ──────────────────────────────────────────────────────► shows \"Дохід 500\" for a −500 expense"
+  - paragraph [ref=e70]:
+    - generic [ref=e71]:
+      - text: The data model threaded
+      - code [ref=e72]: type
+      - text: cleanly end-to-end, and each task's review passed. The defect lived in an unchanged display helper that no per-task diff touched — only the whole-branch review, prompted to check «does any surface still label an expense as income?», found it. Fixed in
+      - code [ref=e73]: e215519
+      - text: ": type-aware header + a leading − on expense amounts."
+  - heading "What was built" [level=2] [ref=e74]
+  - generic [ref=e75]: "message ──► income_parser ──► ParsedIncome(type) ──► IncomeService ──► IncomeRecord(type) ──► records.csv │ −500 / keyword = expense │ │ ▼ └─ /goal ──► GoalService ◄── goals.csv analytics.totals_by_type / net │ month income vs pace │ ▼ ▼ after-save line (income only) report_chart: diverging PNG + HTML income ▲ / expense ▼ · legend totals /chart ──► period picker (week/month/year + last_*) OR \"01.03 15.03\" range ──► _range_buckets"
+  - table [ref=e77]:
+    - rowgroup [ref=e78]:
+      - row [ref=e79]:
+        - cell "Expense marker" [ref=e80]
+        - cell [ref=e81]:
+          - code [ref=e82]: LEADING_MINUS = (?<![\w\d])[-−](?=\d)
+          - text: or keyword
+      - row [ref=e83]:
+        - cell "Range bucketing" [ref=e84]
+        - cell "by day when span ≤ 62 days, else by month" [ref=e85]
+      - row [ref=e86]:
+        - cell "Goal pace" [ref=e87]
+        - cell [ref=e88]:
+          - code [ref=e89]: expected = goal · day / days_in_month
+          - text: ; ahead / behind / reached
+      - row [ref=e90]:
+        - cell "Migration" [ref=e91]
+        - cell [ref=e92]:
+          - generic [ref=e93]:
+            - text: legacy CSV without
+            - code [ref=e94]: type
+            - text: → backfilled «income» on read (side-effect free)
+  - heading "Why it took as long as it did" [level=2] [ref=e95]
+  - generic [ref=e96]:
+    - generic [ref=e97]:
+      - generic [ref=e98]: feat
+      - generic [ref=e101]: "13"
+    - generic [ref=e102]:
+      - generic [ref=e103]: docs
+      - generic [ref=e106]: "2"
+    - generic [ref=e107]:
+      - generic [ref=e108]: refactor
+      - generic [ref=e111]: "1"
+    - generic [ref=e112]:
+      - generic [ref=e113]: fix
+      - generic [ref=e116]: "1"
+  - heading "1 — The review loop, not the writing" [level=3] [ref=e117]
+  - paragraph [ref=e118]:
+    - generic [ref=e119]:
+      - text: "Every task ran impl → review → (fix-round) → re-review before the next. Four tasks needed a fix round: T1 (CI gate:"
+      - code [ref=e120]: just check
+      - text: vs
+      - code [ref=e121]: just test
+      - text: ), T2 (description/Unicode-minus tests), T7 (a non-pristine matplotlib warning + a Feb-29 leap-day crash), and the final wave (expense labeling). The loop is the cost and the reason the one shipping-bug was caught.
+  - 'heading "2 — Structural cost: parallelism you asked for" [level=3] [ref=e122]'
+  - paragraph [ref=e123]:
+    - generic [ref=e124]:
+      - text: T9 (goal model+repo) and T12 (basket) ran in isolated worktrees concurrently with the main chain. But
+      - code [ref=e125]: isolation:worktree
+      - text: branches from
+      - code [ref=e126]: origin/main
+      - text: ", not the feature tip — so their commits had to be cherry-picked back, and T9 hit one merge conflict in"
+      - code [ref=e127]: test_models.py
+      - text: (both sides appended tests to the same block). Real time saved on two tasks; a bounded integration tax to pay it back.
+  - 'heading "3 — Pure friction: subagent watchdog stalls" [level=3] [ref=e128]'
+  - paragraph [ref=e129]:
+    - generic [ref=e130]:
+      - text: Five agents stalled on the 600 s stream-watchdog (T2, T6, T12, T13 implementers + the T8 review). Two stalled after committing (recovered by verifying
+      - code [ref=e131]: just check
+      - text: from the ledger), two stalled before any edit (clean restart), one review produced nothing (re-dispatched). Produced no code — pure environment friction, the most expensive non-productive bucket.
+  - heading "What the review layers caught" [level=2] [ref=e132]
+  - generic [ref=e133]:
+    - generic [ref=e134]:
+      - generic [ref=e135]:
+        - generic [ref=e136]: "1"
+        - strong [ref=e137]: Pre-flight scan
+      - generic [ref=e138]:
+        - text: Caught the leading-minus / MONEY_PATTERN lookbehind collision before any code —
+        - code [ref=e139]: "-500"
+        - text: would never have parsed. Fixed by design (Ruling A).
+    - generic [ref=e140]:
+      - generic [ref=e141]:
+        - generic [ref=e142]: "2"
+        - strong [ref=e143]: Per-task review
+      - text: Caught the CI-gate gap (T1), stray-minus description (T2), a non-pristine warning + leap-day crash (T7).
+    - generic [ref=e144]:
+      - generic [ref=e145]:
+        - generic [ref=e146]: "3"
+        - strong [ref=e147]: Whole-branch review (opus)
+      - generic [ref=e148]: "The only layer that found the shipping bug: an expense labeled «Дохід» on the record card. Every per-task review had passed."
+    - generic [ref=e149]:
+      - generic [ref=e150]:
+        - generic [ref=e151]: "4"
+        - strong [ref=e152]: /code-review + /simplify
+      - text: "Post-fix sweep: confirmed the Ruling-A parser tradeoffs (kept by decision), fixed the range-PNG coupling, flagged DRY cleanups (5 applied)."
+  - paragraph [ref=e153]:
+    - generic [ref=e154]:
+      - text: "Convergence: the expense-as-income theme was flagged independently by the whole-branch review (card header) and later by /code-review (fun-summary) and /simplify altitude (ad-hoc type checks) — three routes to the same root: display consequences of"
+      - code [ref=e155]: type
+      - text: were never centralized.
+  - heading "Evidence" [level=2] [ref=e156]
+  - generic [ref=e157]: "$ git log --format='%h|%at|%s' 511f7b6..HEAD (sorted by time) 3c7267b 10:09 docs design spec 102b055 10:15 docs implementation plan c6b900d 10:20 feat T1 type discriminator 399a2b0 10:38 feat T2 expense parser 6d6774b 11:02 feat T3 CSV migration 5a10ab5 11:07 feat T4 capture type b67f72c 11:13 feat T5 income/expense/net 4d5fe2b 11:16 feat T9 ChatGoal + repo 7e1a5cd 11:12 feat T12 richer basket 54bd0d1 11:34 feat T6 diverging chart 0f25d24 11:40 feat T7 preset periods 6fa81a0 12:00 feat T8 date-range reports 73c9cd0 12:19 feat T10 goal pacing 0371f92 12:31 feat T11 /goal command 246f8ce 12:54 feat T13 wiring e215519 13:05 fix expense labeling 6106031 14:29 refactor simplify cleanups fix-rounds (from SDD ledger, --amended into their task commits): T1 ruff format + pyright (2 findings) → c6b900d T2 description assert + Unicode-minus test → 399a2b0 T7 legend guard `if currencies:` + leap-day → 0f25d24 final wave expense card/list/reply labeling → e215519 watchdog stalls: T2 (post-commit), T6 (pre-edit), T12 (post-commit), T13 (pre-edit), T8 review (no output) — all re-dispatched. cherry-pick conflict: test_models.py (T9) — kept both type-tests and ChatGoal-tests. $ just check (branch tip 6106031) 342 passed in 19.26s · ruff format ✓ · ruff check ✓ · pyright 0/0/0 · 0 warnings"
+  - heading "Provenance & limits" [level=2] [ref=e158]
+  - table [ref=e159]:
+    - rowgroup [ref=e160]:
+      - row [ref=e161]:
+        - cell "Directly observed" [ref=e162]
+        - cell [ref=e163]:
+          - generic [ref=e164]:
+            - text: commit SHAs/subjects, diff stat, 342-test
+            - code [ref=e165]: just check
+            - text: output, the SDD ledger (
+            - code [ref=e166]: .superpowers/sdd/…/progress.md
+            - text: ", written contemporaneously), PR #3 state via"
+            - code [ref=e167]: gh
+            - text: .
+      - row [ref=e168]:
+        - cell "Derived" [ref=e169]
+        - cell "«actual work» = sum of inter-commit gaps ≤ 2 h (all gaps qualified, so it equals the span); fix-ratio from commit-subject prefixes. Timestamps proxy effort, not a timesheet." [ref=e170]
+      - row [ref=e171]:
+        - cell "Still open" [ref=e172]
+        - cell "CI is UNSTABLE (checks running) at capture; no GitHub /review-pr or /just-test posted yet; the Ruling-A parser tradeoffs and the HTML-chart type/range awareness are accepted follow-ups." [ref=e173]

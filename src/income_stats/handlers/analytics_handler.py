@@ -113,6 +113,10 @@ async def chart_period_callback(
     callback_data: ChartPeriod,
     analytics_service: AnalyticsService,
 ) -> None:
+    from contextlib import suppress
+
+    from aiogram.exceptions import TelegramBadRequest
+
     await query.answer()
     if callback_data.period not in CHART_PERIODS or not isinstance(
         query.message, Message
@@ -120,6 +124,8 @@ async def chart_period_callback(
         return
     period = cast(Period, callback_data.period)
     logger.bind(chat_id=query.message.chat.id, period=period).info("Chart requested")
+    with suppress(TelegramBadRequest):
+        await query.message.delete()
     try:
         await send_chart(query.message, analytics_service, period)
     except ValueError:
