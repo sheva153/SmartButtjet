@@ -416,16 +416,15 @@ def _write_chart_artifacts(
             figure.write_html(html, include_plotlyjs=True, full_html=True)
         if png is not None:
             try:
-                tag_totals = AnalyticsService.tag_totals(frame)
                 render_report_png(
                     frame,
                     period,
                     reference,
                     png,
-                    date_range,
-                    goal,
-                    forecast,
-                    tag_totals,
+                    date_range=date_range,
+                    fx=config.fx_to_uah,
+                    goal=goal,
+                    forecast=forecast,
                 )
             except Exception as error:
                 if html is None:

@@ -380,10 +380,10 @@ async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
     repository.goal = ChatGoal(
         chat_id=-100, amount=Decimal("50000"), currency="UAH", updated_by=1
     )
-    captured: dict[str, tuple[object, ...]] = {}
+    captured: dict[str, dict[str, object]] = {}
 
     def capture_render(*args: object, **kwargs: object) -> None:
-        captured["args"] = args
+        captured["kwargs"] = kwargs
         report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
@@ -395,20 +395,20 @@ async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
     assert artifacts.png is not None and artifacts.png.read_bytes().startswith(
         b"\x89PNG"
     )
-    goal_arg, forecast_arg = captured["args"][5], captured["args"][6]
-    assert goal_arg == Decimal("50000")
-    assert forecast_arg is not None
+    assert captured["kwargs"]["goal"] == Decimal("50000")
+    assert captured["kwargs"]["forecast"] is not None
 
 
-async def test_chart_threads_tag_totals_into_png(
+async def test_chart_threads_fx_into_png(
     repository: FakeAnalyticsRepository,
     analytics_service: AnalyticsService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, tuple[object, ...]] = {}
+    """The renderer derives tag mixes from the frame itself; fx still must arrive."""
+    captured: dict[str, dict[str, object]] = {}
 
     def capture_render(*args: object, **kwargs: object) -> None:
-        captured["args"] = args
+        captured["kwargs"] = kwargs
         report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
@@ -417,7 +417,7 @@ async def test_chart_threads_tag_totals_into_png(
         -100, "month", today=date(2026, 7, 29)
     )
 
-    assert captured["args"][7] == {"card": 500.0}
+    assert captured["kwargs"]["fx"] == AnalyticsConfig().fx_to_uah
 
 
 async def test_year_chart_without_goal_passes_no_goal_line(
@@ -425,18 +425,18 @@ async def test_year_chart_without_goal_passes_no_goal_line(
     analytics_service: AnalyticsService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, tuple[object, ...]] = {}
+    captured: dict[str, dict[str, object]] = {}
 
     def capture_render(*args: object, **kwargs: object) -> None:
-        captured["args"] = args
+        captured["kwargs"] = kwargs
         report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
 
     await analytics_service.build_chart_artifacts(-100, "year", today=date(2026, 7, 29))
 
-    assert captured["args"][5] is None
-    assert captured["args"][6] is None
+    assert captured["kwargs"]["goal"] is None
+    assert captured["kwargs"]["forecast"] is None
 
 
 async def test_mixed_currency_month_chart_skips_goal_line_to_avoid_ambiguity(
@@ -457,18 +457,18 @@ async def test_mixed_currency_month_chart_skips_goal_line_to_avoid_ambiguity(
         AnalyticsConfig(),
         StorageConfig(export_directory=tmp_path),
     )
-    captured: dict[str, tuple[object, ...]] = {}
+    captured: dict[str, dict[str, object]] = {}
 
     def capture_render(*args: object, **kwargs: object) -> None:
-        captured["args"] = args
+        captured["kwargs"] = kwargs
         report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
 
     await service.build_chart_artifacts(-100, "month", today=date(2026, 7, 29))
 
-    assert captured["args"][5] is None
-    assert captured["args"][6] is None
+    assert captured["kwargs"]["goal"] is None
+    assert captured["kwargs"]["forecast"] is None
 
 
 async def test_chart_failure_falls_back_to_html(

@@ -7,27 +7,84 @@ from typing import cast
 import pandas as pd
 import pytest
 
-from income_stats.models import Period
+from income_stats.models import IncomeRecord, Period, RecordType
 from income_stats.services.report_chart import (
     PERIOD_TITLES,
-    _aggregate,
-    _legend_label,
     _period_buckets,
     _range_buckets,
     render_report_png,
 )
 
+_FX = {"USD": 41.0, "EUR": 45.0}
 
-def _week_frame_mixed() -> pd.DataFrame:
-    """Monday income 2000 UAH, Tuesday expense 500 UAH for the week of 2026-08-17."""
-    return pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 17), date(2026, 8, 18)],
-            "currency": ["UAH", "UAH"],
-            "amount": [Decimal("2000"), Decimal("500")],
-            "type": ["income", "expense"],
-        }
+
+def _record(
+    *,
+    income_date: date,
+    amount: str,
+    currency: str = "UAH",
+    tags: list[str] | None = None,
+    kind: RecordType = "income",
+) -> dict[str, object]:
+    record = IncomeRecord(
+        telegram_message_id=1,
+        chat_id=-100,
+        user_id=1,
+        updated_by=1,
+        original_text="test",
+        amount=Decimal(amount),
+        currency=currency,
+        tags=tags or [],
+        type=kind,
+        income_date=income_date,
     )
+    return record.model_dump(mode="python")
+
+
+def _mixed_frame() -> pd.DataFrame:
+    """Week of 2026-08-17 (Monday): mixed currencies, single/multi tags, both kinds."""
+    rows = [
+        _record(
+            income_date=date(2026, 8, 17),
+            amount="20000",
+            currency="UAH",
+            tags=["salary", "card"],
+            kind="income",
+        ),
+        _record(
+            income_date=date(2026, 8, 17),
+            amount="8000",
+            currency="UAH",
+            tags=["rent", "card"],
+            kind="expense",
+        ),
+        _record(
+            income_date=date(2026, 8, 18),
+            amount="300",
+            currency="USD",
+            tags=["freelance", "card"],
+            kind="income",
+        ),
+        _record(
+            income_date=date(2026, 8, 19),
+            amount="1600",
+            currency="UAH",
+            tags=["groceries", "cafe", "card"],
+            kind="expense",
+        ),
+        _record(
+            income_date=date(2026, 8, 20),
+            amount="1000",
+            currency="UAH",
+            tags=[],
+            kind="income",
+        ),
+    ]
+    return pd.DataFrame(rows, columns=list(IncomeRecord.model_fields))
+
+
+def _empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=list(IncomeRecord.model_fields))
 
 
 def test_week_buckets_are_weekdays() -> None:
@@ -85,38 +142,6 @@ def test_last_year_buckets_survive_leap_day_reference() -> None:
     assert index_of(date(2028, 1, 5)) is None
 
 
-def test_render_writes_png_for_leap_day_last_year_reference(tmp_path: Path) -> None:
-    frame = pd.DataFrame(
-        {
-            "income_date": [date(2027, 3, 1)],
-            "currency": ["UAH"],
-            "amount": [Decimal("100")],
-            "type": ["income"],
-        }
-    )
-    path = tmp_path / "leap.png"
-    render_report_png(frame, cast(Period, "last_year"), date(2028, 2, 29), path)
-    assert path.read_bytes().startswith(b"\x89PNG")
-
-
-def test_render_report_png_no_warning_when_period_has_no_matching_data(
-    tmp_path: Path,
-) -> None:
-    frame = pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 3)],
-            "currency": ["UAH"],
-            "amount": [Decimal("100")],
-            "type": ["income"],
-        }
-    )
-    path = tmp_path / "empty.png"
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        render_report_png(frame, cast(Period, "last_month"), date(2026, 8, 17), path)
-    assert path.read_bytes().startswith(b"\x89PNG")
-
-
 def test_preset_periods_have_titles() -> None:
     assert PERIOD_TITLES["last_week"] == "Звіт за минулий тиждень"
     assert PERIOD_TITLES["last_month"] == "Звіт за минулий місяць"
@@ -126,72 +151,6 @@ def test_preset_periods_have_titles() -> None:
 def test_unsupported_period_raises() -> None:
     with pytest.raises(ValueError, match="Unsupported report period"):
         _period_buckets(cast(Period, "all"), date(2026, 8, 14))
-
-
-def test_aggregate_sums_per_bucket_and_currency() -> None:
-    labels, index_of = _period_buckets("week", date(2026, 8, 14))
-    frame = pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 10), date(2026, 8, 10), date(2026, 8, 12)],
-            "currency": ["UAH", "UAH", "USD"],
-            "amount": [Decimal("100"), Decimal("50"), Decimal("20")],
-            "type": ["income", "income", "expense"],
-        }
-    )
-    series = _aggregate(frame, labels, index_of)
-    assert series["UAH"]["income"][0] == 150.0  # Monday sum
-    assert series["USD"]["expense"][2] == 20.0  # Wednesday
-
-
-def test_aggregate_splits_income_and_expense() -> None:
-    labels, index_of = _period_buckets("week", date(2026, 8, 17))
-    frame = _week_frame_mixed()
-    series = _aggregate(frame, labels, index_of)
-    assert series["UAH"]["income"][0] == 2000.0
-    assert series["UAH"]["expense"][1] == 500.0
-
-
-def test_aggregate_initializes_both_kinds_for_every_currency() -> None:
-    labels, index_of = _period_buckets("week", date(2026, 8, 17))
-    frame = pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 17)],
-            "currency": ["USD"],
-            "amount": [Decimal("10")],
-            "type": ["income"],
-        }
-    )
-    series = _aggregate(frame, labels, index_of)
-    assert series["USD"]["expense"] == [0.0] * len(labels)
-
-
-def test_legend_label_includes_totals() -> None:
-    assert (
-        _legend_label("UAH", income=12000.0, expense=3000.0) == "UAH: +12 000 / −3 000"
-    )
-
-
-@pytest.mark.parametrize(
-    "period", ["week", "month", "year", "last_week", "last_month", "last_year"]
-)
-def test_render_writes_png(period: str, tmp_path: Path) -> None:
-    frame = pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 3), date(2026, 8, 14)],
-            "currency": ["UAH", "USD"],
-            "amount": [Decimal("1500"), Decimal("250")],
-            "type": ["income", "expense"],
-        }
-    )
-    path = tmp_path / f"{period}.png"
-    render_report_png(frame, cast(Period, period), date(2026, 8, 14), path)
-    assert path.read_bytes().startswith(b"\x89PNG")
-
-
-def test_render_report_png_writes_file(tmp_path: Path) -> None:
-    path = tmp_path / "chart.png"
-    render_report_png(_week_frame_mixed(), "week", date(2026, 8, 17), path)
-    assert path.exists() and path.stat().st_size > 0
 
 
 def test_range_buckets_by_day_for_short_span() -> None:
@@ -209,108 +168,183 @@ def test_range_buckets_by_month_for_long_span() -> None:
     assert index_of(date(2024, 12, 31)) is None
 
 
-def test_render_report_png_uses_range_title(tmp_path: Path) -> None:
-    path = tmp_path / "range.png"
-    render_report_png(
-        _week_frame_mixed(),
-        "week",
-        date(2026, 8, 17),
-        path,
-        date_range=(date(2026, 8, 17), date(2026, 8, 18)),
-    )
-    assert path.read_bytes().startswith(b"\x89PNG")
-
-
-def _month_frame() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "income_date": [date(2026, 8, 3), date(2026, 8, 14)],
-            "currency": ["UAH", "UAH"],
-            "amount": [Decimal("1500"), Decimal("2500")],
-            "type": ["income", "income"],
-        }
-    )
-
-
-def test_render_draws_goal_and_forecast(tmp_path: Path) -> None:
-    path = tmp_path / "c.png"
-    render_report_png(
-        _month_frame(),
-        "month",
-        date(2026, 8, 17),
-        path,
-        goal=Decimal("50000"),
-        forecast=Decimal("42000"),
-    )
-    assert path.exists() and path.stat().st_size > 0
-
-
-def test_tag_label_is_plain_ukrainian_text() -> None:
-    from income_stats.services.report_chart import _tag_label
-
-    assert _tag_label("rent") == "Оренда"
-    assert _tag_label("card") == "Картка"
-
-
-def test_tag_label_falls_back_to_raw_tag() -> None:
-    from income_stats.services.report_chart import _tag_label
-
-    assert _tag_label("unknown-tag") == "unknown-tag"
-
-
-def test_render_includes_tag_breakdown(tmp_path: Path) -> None:
-    path = tmp_path / "c.png"
-    render_report_png(
-        _month_frame(),
-        "month",
-        date(2026, 8, 17),
-        path,
-        tag_totals={"rent": 8000.0, "card": 12000.0},
-    )
-    assert path.exists() and path.stat().st_size > 0
-
-
-def test_render_report_png_no_warning_with_tag_breakdown(tmp_path: Path) -> None:
-    path = tmp_path / "c.png"
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        render_report_png(
-            _month_frame(),
-            "month",
-            date(2026, 8, 17),
-            path,
-            tag_totals={"rent": 8000.0, "card": 12000.0},
-        )
-    assert path.read_bytes().startswith(b"\x89PNG")
-
-
-def test_render_omits_tag_section_when_empty(tmp_path: Path) -> None:
-    path = tmp_path / "c.png"
-    render_report_png(
-        _month_frame(),
-        "month",
-        date(2026, 8, 17),
-        path,
-        tag_totals={},
-    )
-    assert path.exists() and path.stat().st_size > 0
-
-
-def test_render_omits_tag_section_when_none(tmp_path: Path) -> None:
-    path = tmp_path / "c.png"
-    render_report_png(
-        _month_frame(),
-        "month",
-        date(2026, 8, 17),
-        path,
-        tag_totals=None,
-    )
-    assert path.exists() and path.stat().st_size > 0
-
-
 def test_to_uah_converts_by_rate() -> None:
     from income_stats.services.report_chart import to_uah
 
     assert to_uah(Decimal("100"), "USD", {"USD": 41.0}) == Decimal("4100")
     assert to_uah(Decimal("100"), "UAH", {"USD": 41.0}) == Decimal("100")
     assert to_uah(Decimal("100"), "GBP", {"USD": 41.0}) == Decimal("100")
+
+
+def test_month_labels_include_weekday() -> None:
+    from income_stats.services.report_chart import _month_labels
+
+    labels = _month_labels(2026, 8)
+    assert labels[0] == "1\nСб"  # 2026-08-01 is Saturday
+    assert len(labels) == 31
+    assert labels[-1] == "31\nПн"  # 2026-08-31 is Monday
+
+
+def test_mix_cmap_multi_tag_has_flat_blocks() -> None:
+    from income_stats.services.report_chart import _mix_cmap
+
+    cm = _mix_cmap(["card", "groceries", "cafe"])
+    # three distinct block colours sampled away from the seams
+    assert cm(0.15) != cm(0.5) != cm(0.85)
+
+
+def test_mix_cmap_single_tag_is_flat() -> None:
+    from income_stats.services.report_chart import _mix_cmap
+
+    cm = _mix_cmap(["card"])
+    assert cm(0.0) == cm(0.5) == cm(1.0)
+
+
+def test_label_returns_ukrainian_display_name() -> None:
+    from income_stats.services.report_chart import _label
+
+    assert _label("rent") == "Оренда"
+    assert _label("card") == "Картка"
+
+
+def test_label_falls_back_to_raw_tag() -> None:
+    from income_stats.services.report_chart import _label
+
+    assert _label("unknown-tag") == "unknown-tag"
+
+
+def test_label_maps_no_tag_sentinel() -> None:
+    from income_stats.services.report_chart import NO_TAG, _label
+
+    assert _label(NO_TAG[0]) == "Без тегу"
+
+
+def test_render_tag_mix_writes_png(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(_mixed_frame(), "week", date(2026, 8, 17), path, fx=_FX)
+    assert path.exists() and path.stat().st_size > 0
+
+
+@pytest.mark.parametrize(
+    "period", ["week", "month", "year", "last_week", "last_month", "last_year"]
+)
+def test_render_writes_png_for_all_periods(period: str, tmp_path: Path) -> None:
+    path = tmp_path / f"{period}.png"
+    render_report_png(
+        _mixed_frame(), cast(Period, period), date(2026, 8, 17), path, fx=_FX
+    )
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_report_png_no_warning_when_period_has_no_matching_data(
+    tmp_path: Path,
+) -> None:
+    frame = pd.DataFrame(
+        [_record(income_date=date(2026, 8, 3), amount="100")],
+        columns=list(IncomeRecord.model_fields),
+    )
+    path = tmp_path / "empty.png"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render_report_png(
+            frame, cast(Period, "last_month"), date(2026, 8, 17), path, fx=_FX
+        )
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_report_png_uses_range_title(tmp_path: Path) -> None:
+    path = tmp_path / "range.png"
+    render_report_png(
+        _mixed_frame(),
+        "week",
+        date(2026, 8, 17),
+        path,
+        date_range=(date(2026, 8, 17), date(2026, 8, 18)),
+        fx=_FX,
+    )
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_draws_goal_and_forecast(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    render_report_png(
+        _mixed_frame(),
+        "month",
+        date(2026, 8, 17),
+        path,
+        fx=_FX,
+        goal=Decimal("50000"),
+        forecast=Decimal("42000"),
+    )
+    assert path.exists() and path.stat().st_size > 0
+
+
+def test_render_report_png_no_warning_with_goal_and_forecast(tmp_path: Path) -> None:
+    path = tmp_path / "c.png"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render_report_png(
+            _mixed_frame(),
+            "month",
+            date(2026, 8, 17),
+            path,
+            fx=_FX,
+            goal=Decimal("50000"),
+            forecast=Decimal("42000"),
+        )
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_handles_empty_frame_without_crashing(tmp_path: Path) -> None:
+    path = tmp_path / "empty.png"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render_report_png(_empty_frame(), "month", date(2026, 8, 17), path, fx=_FX)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_groups_legend_by_tag_mix_and_sums_uah_equivalent(
+    tmp_path: Path,
+) -> None:
+    """Two records sharing a tag-mix in different slots collapse into one combo sum."""
+    from income_stats.services.report_chart import _colours, to_uah
+
+    frame = pd.DataFrame(
+        [
+            _record(
+                income_date=date(2026, 8, 17),
+                amount="1200",
+                currency="UAH",
+                tags=["groceries", "cash"],
+                kind="expense",
+            ),
+            _record(
+                income_date=date(2026, 8, 20),
+                amount="700",
+                currency="UAH",
+                tags=["groceries", "cash"],
+                kind="expense",
+            ),
+        ],
+        columns=list(IncomeRecord.model_fields),
+    )
+    path = tmp_path / "combo.png"
+    render_report_png(frame, "week", date(2026, 8, 17), path, fx=_FX)
+    assert path.exists() and path.stat().st_size > 0
+    total = to_uah(Decimal("1200"), "UAH", _FX) + to_uah(Decimal("700"), "UAH", _FX)
+    assert total == Decimal("1900")
+    assert _colours(["groceries", "cash"]) != []
+
+
+def test_render_untagged_record_uses_no_tag_sentinel(tmp_path: Path) -> None:
+    frame = pd.DataFrame(
+        [
+            _record(
+                income_date=date(2026, 8, 17), amount="1000", currency="UAH", tags=[]
+            )
+        ],
+        columns=list(IncomeRecord.model_fields),
+    )
+    path = tmp_path / "untagged.png"
+    render_report_png(frame, "week", date(2026, 8, 17), path, fx=_FX)
+    assert path.read_bytes().startswith(b"\x89PNG")
