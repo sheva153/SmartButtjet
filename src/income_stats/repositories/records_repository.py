@@ -23,6 +23,7 @@ from income_stats.models import (
     GoalPeriod,
     IncomeRecord,
     RecordNote,
+    TagAlias,
     normalize_label,
 )
 
@@ -30,6 +31,7 @@ RECORD_COLUMNS = list(IncomeRecord.model_fields)
 NOTE_COLUMNS = list(RecordNote.model_fields)
 CHAT_SETTING_COLUMNS = list(ChatSetting.model_fields)
 GOAL_COLUMNS = list(ChatGoal.model_fields)
+TAG_COLUMNS = list(TagAlias.model_fields)
 EDITABLE_RECORD_FIELDS = frozenset(
     {
         "amount",
@@ -107,6 +109,15 @@ class RecordsRepository(Protocol):
 
     async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]: ...
 
+    async def list_tags(self) -> dict[str, list[str]]: ...
+
+    async def add_tag(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias: ...
+
 
 def _encode_cell(value: object) -> str:
     if isinstance(value, list):
@@ -145,6 +156,7 @@ class CsvRecordsRepository:
         self.notes_path = config.notes_file
         self.chat_settings_path = config.chat_settings_file
         self.goals_path = config.goals_file
+        self.tags_path = config.tags_file
         self.export_directory = config.export_directory
         self._async_lock = asyncio.Lock()
         self._sync_lock = threading.RLock()
@@ -560,6 +572,50 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.goals_path)
             return goal
 
+    def list_tags_sync(self) -> dict[str, list[str]]:
+        with self._sync_lock:
+            frame = self._read(self.tags_path, TAG_COLUMNS)
+            tags: dict[str, list[str]] = {}
+            for _, row in frame.iterrows():
+                payload = row.to_dict()
+                tags[payload["tag"]] = _decode_string_list(
+                    payload["aliases"], field="aliases"
+                )
+            return tags
+
+    def add_tag_sync(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias:
+        with self._sync_lock:
+            frame = self._read(self.tags_path, TAG_COLUMNS)
+            canonical = normalize_label(tag)
+            indexes = frame.index[frame["tag"] == canonical].tolist()
+            existing_aliases = (
+                _decode_string_list(frame.loc[indexes[-1], "aliases"], field="aliases")
+                if indexes
+                else []
+            )
+            tag_alias = TagAlias(
+                tag=canonical,
+                aliases=[*existing_aliases, *aliases],
+                updated_by=updated_by,
+            )
+            row = _to_row(tag_alias)
+            if indexes:
+                frame.loc[indexes[-1], TAG_COLUMNS] = [
+                    row[column] for column in TAG_COLUMNS
+                ]
+            else:
+                frame = pd.concat(
+                    [frame, pd.DataFrame([row], columns=TAG_COLUMNS)],
+                    ignore_index=True,
+                )
+            self._atomic_write(frame, self.tags_path)
+            return tag_alias
+
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         async with self._async_lock:
             return self.create_record_sync(record)
@@ -633,3 +689,16 @@ class CsvRecordsRepository:
     ) -> ChatGoal:
         async with self._async_lock:
             return self.set_goal_sync(chat_id, amount, currency, updated_by, period)
+
+    async def list_tags(self) -> dict[str, list[str]]:
+        async with self._async_lock:
+            return self.list_tags_sync()
+
+    async def add_tag(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias:
+        async with self._async_lock:
+            return self.add_tag_sync(tag, aliases, updated_by)

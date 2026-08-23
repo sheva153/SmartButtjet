@@ -12,6 +12,7 @@ from income_stats.models import (
     GoalPeriod,
     IncomeRecord,
     RecordNote,
+    TagAlias,
 )
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services.records_service import (
@@ -49,6 +50,7 @@ class FakeRecordsRepository:
         self.records = {record.id: record for record in records}
         self.notes: list[RecordNote] = []
         self.goals: dict[int, ChatGoal] = {}
+        self.tags: dict[str, list[str]] = {}
 
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         self.records[record.id] = record
@@ -153,6 +155,23 @@ class FakeRecordsRepository:
             self.records[record.id] = record
             added += 1
         return added, skipped
+
+    async def list_tags(self) -> dict[str, list[str]]:
+        return dict(self.tags)
+
+    async def add_tag(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias:
+        tag_alias = TagAlias(
+            tag=tag,
+            aliases=[*self.tags.get(tag, []), *aliases],
+            updated_by=updated_by,
+        )
+        self.tags[tag_alias.tag] = tag_alias.aliases
+        return tag_alias
 
 
 @pytest.fixture

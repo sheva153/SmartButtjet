@@ -13,6 +13,7 @@ from income_stats.models.domain import (
     Period,
     RecordNote,
     RecordType,
+    TagAlias,
     normalize_label,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "Period",
     "RecordNote",
     "RecordType",
+    "TagAlias",
     "normalize_label",
 ]

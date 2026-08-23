@@ -359,6 +359,26 @@ def test_taxonomy_aliases_are_word_bounded(income_config: IncomeConfig) -> None:
     assert parsed[0].categories == ["other"]
 
 
+def test_extra_tags_are_merged_into_detected_tags(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "оплата 500 зал",
+        income_config,
+        extra_tags={"gym": ["зал", "спортзал"]},
+    )
+
+    assert parsed[0].tags == ["gym"]
+
+
+def test_extra_tags_defaults_to_none_and_does_not_change_behavior(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message("зп 500 на картку", income_config)
+
+    assert parsed[0].tags == ["card"]
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [

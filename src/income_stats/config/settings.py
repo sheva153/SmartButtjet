@@ -26,6 +26,7 @@ class StorageConfig(BaseModel):
     notes_file: Path = Path("data/record_notes.csv")
     chat_settings_file: Path = Path("data/chat_settings.csv")
     goals_file: Path = Path("data/goals.csv")
+    tags_file: Path = Path("data/tags.csv")
     export_directory: Path = Path("data/exports")
 
 

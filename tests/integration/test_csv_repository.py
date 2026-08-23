@@ -25,6 +25,7 @@ def csv_repository(tmp_path: Path) -> CsvRecordsRepository:
             notes_file=tmp_path / "notes.csv",
             chat_settings_file=tmp_path / "chat-settings.csv",
             goals_file=tmp_path / "goals.csv",
+            tags_file=tmp_path / "tags.csv",
             export_directory=tmp_path / "exports",
         )
     )
@@ -425,6 +426,34 @@ def test_legacy_goals_without_period_are_month(
     assert goal is not None
     assert goal.amount > 0
     assert goal.period == "month"
+
+
+def test_add_and_list_tags(csv_repository: CsvRecordsRepository) -> None:
+    assert csv_repository.list_tags_sync() == {}
+
+    tag = csv_repository.add_tag_sync("gym", ["зал", "спортзал"], updated_by=7)
+
+    assert tag.tag == "gym"
+    assert tag.aliases == ["зал", "спортзал"]
+    assert tag.updated_by == 7
+    assert csv_repository.list_tags_sync() == {"gym": ["зал", "спортзал"]}
+
+
+def test_add_tag_again_extends_aliases(csv_repository: CsvRecordsRepository) -> None:
+    csv_repository.add_tag_sync("gym", ["зал"], updated_by=7)
+    csv_repository.add_tag_sync("gym", ["зал", "спортзал"], updated_by=7)
+
+    tags = csv_repository.list_tags_sync()
+
+    assert tags == {"gym": ["зал", "спортзал"]}
+
+
+async def test_async_add_and_list_tags(csv_repository: CsvRecordsRepository) -> None:
+    await csv_repository.add_tag("gym", ["зал"], updated_by=7)
+
+    tags = await csv_repository.list_tags()
+
+    assert tags == {"gym": ["зал"]}
 
 
 def test_missing_csv_columns_are_reported(

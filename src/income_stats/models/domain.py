@@ -150,6 +150,34 @@ class RecordNote(BaseModel):
         return value
 
 
+class TagAlias(BaseModel):
+    """A runtime-defined tag and the message aliases that detect it."""
+
+    tag: str
+    aliases: list[str] = Field(default_factory=list)
+    updated_by: int
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def normalize_tag(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Tag must be a string")
+        return normalize_label(value)
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def normalize_aliases(cls, values: object) -> list[str]:
+        if not isinstance(values, list):
+            raise ValueError("Aliases must be a list")
+        normalized: list[str] = []
+        for alias in values:
+            if not isinstance(alias, str) or not alias.strip():
+                raise ValueError("Aliases must not be blank")
+            normalized.append(alias.strip().casefold())
+        return list(dict.fromkeys(normalized))
+
+
 class ChatSetting(BaseModel):
     """Per-chat income recording state."""
 
