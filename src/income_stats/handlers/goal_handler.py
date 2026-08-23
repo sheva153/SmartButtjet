@@ -1,5 +1,6 @@
 """/goal command: set or show the monthly income goal."""
 
+import asyncio
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
@@ -10,6 +11,7 @@ from aiogram.types import Message
 
 from income_stats.config import AppConfig
 from income_stats.models import GoalPeriod
+from income_stats.models.domain import _normalize_currency
 from income_stats.repositories import RecordsRepository
 from income_stats.services import GoalService
 
@@ -35,24 +37,22 @@ async def goal_handler(
     if command.args:
         parts = command.args.split()
         period: GoalPeriod = "month"
-        idx = 0
         if parts and parts[0].casefold() in _PERIOD_ALIASES:
-            period = _PERIOD_ALIASES[parts[0].casefold()]
-            idx = 1
+            period = _PERIOD_ALIASES[parts.pop(0).casefold()]
         try:
-            amount = Decimal(parts[idx].replace(",", "."))
+            amount = Decimal(parts[0].replace(",", "."))
         except (InvalidOperation, IndexError):
             await message.answer("Формат: /goal [month|year] 50000 [UAH]")
             return
-        currency = (
-            parts[idx + 1].upper()
-            if len(parts) > idx + 1
-            else app_config.income.default_currency
+        currency_raw = (
+            parts[1] if len(parts) > 1 else app_config.income.default_currency
         )
         if amount <= 0:
             await message.answer("Ціль має бути більшою за нуль.")
             return
-        if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+        try:
+            currency = _normalize_currency(currency_raw)
+        except ValueError:
             await message.answer("Валюта — це код з трьох літер, напр. UAH.")
             return
         user = message.from_user
@@ -62,11 +62,15 @@ async def goal_handler(
         label = "місяць" if period == "month" else "рік"
         await message.answer(f"🎯 Ціль встановлено: {amount:,.0f} {currency}/{label}")
         return
-    lines = []
-    for period in ("month", "year"):
-        p = await goal_service.progress(message.chat.id, today=today, period=period)
-        if p is not None:
-            lines.append(goal_service.render(p))
+    month_progress, year_progress = await asyncio.gather(
+        goal_service.progress(message.chat.id, today=today, period="month"),
+        goal_service.progress(message.chat.id, today=today, period="year"),
+    )
+    lines = [
+        goal_service.render(progress)
+        for progress in (month_progress, year_progress)
+        if progress is not None
+    ]
     await message.answer(
         "\n\n".join(lines)
         if lines

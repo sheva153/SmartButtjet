@@ -283,7 +283,8 @@ def render_report_png(
     if currencies:
         axes.legend(title="Валюта")
 
-    if tag_axes is not None and tag_totals:
+    if tag_axes is not None:
+        assert tag_totals is not None  # tag_axes is only set when tag_totals is set
         tags = sorted(tag_totals, key=lambda tag: tag_totals[tag], reverse=True)
         values = [tag_totals[tag] for tag in tags]
         positions_tags = range(len(tags))

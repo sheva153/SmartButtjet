@@ -257,8 +257,12 @@ class AnalyticsService:
             raise ValueError("No data for chart")
         if not self._config.static_preview and not self._config.interactive_html:
             raise ValueError("At least one chart format must be enabled")
-        goal_amount, forecast = await self._goal_line(
-            chat_id, resolved_period, reference, date_range, frame
+        goal_amount, forecast = (
+            await self._goal_line(
+                chat_id, resolved_period, reference, date_range, frame
+            )
+            if self._config.static_preview
+            else (None, None)
         )
         return await _run_blocking(
             partial(

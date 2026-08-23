@@ -335,10 +335,14 @@ class CsvRecordsRepository:
     def import_records_sync(self, records: list[IncomeRecord]) -> tuple[int, int]:
         with self._sync_lock:
             frame = self._read_records_unlocked()
-            existing = {
-                (row["chat_id"], row["telegram_message_id"], row["source_index"])
-                for _, row in frame.iterrows()
-            }
+            existing = set(
+                zip(
+                    frame["chat_id"],
+                    frame["telegram_message_id"],
+                    frame["source_index"],
+                    strict=False,
+                )
+            )
             added = 0
             skipped = 0
             new_rows = []
