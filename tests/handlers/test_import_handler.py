@@ -12,6 +12,7 @@ from aiogram.types import Message
 
 from income_stats.config import AppConfig
 from income_stats.handlers.import_handler import (
+    _has_import_caption,
     import_handler,
     import_router,
     import_usage_handler,
@@ -22,6 +23,20 @@ from income_stats.repositories import RecordsRepository
 def test_import_handler_is_importable() -> None:
     assert callable(import_handler)
     assert import_router.name == "import"
+
+
+def test_import_caption_matches_exact_command() -> None:
+    assert _has_import_caption("/import") is True
+    assert _has_import_caption("/import something") is True
+    assert _has_import_caption("/import@my_bot") is True
+    assert _has_import_caption("/import@my_bot rows") is True
+
+
+def test_import_caption_rejects_lookalike_commands() -> None:
+    assert _has_import_caption("/importantnote here") is False
+    assert _has_import_caption("/imports") is False
+    assert _has_import_caption(None) is False
+    assert _has_import_caption("") is False
 
 
 async def test_import_usage_hint_without_document() -> None:

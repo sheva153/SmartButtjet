@@ -52,6 +52,9 @@ async def goal_handler(
         if amount <= 0:
             await message.answer("Ціль має бути більшою за нуль.")
             return
+        if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+            await message.answer("Валюта — це код з трьох літер, напр. UAH.")
+            return
         user = message.from_user
         await repository.set_goal(
             message.chat.id, amount, currency, user.id if user else 0, period=period

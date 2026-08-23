@@ -157,6 +157,52 @@ async def test_goal_set_rejects_garbage_amount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_goal_set_rejects_invalid_currency() -> None:
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+    )
+    repository = SimpleNamespace(set_goal=AsyncMock())
+    goal_service = SimpleNamespace(progress=AsyncMock(), render=AsyncMock())
+
+    await goal_handler(
+        cast(Message, message),
+        CommandObject(command="goal", args="month 50000 dollars"),
+        cast(RecordsRepository, repository),
+        cast(GoalService, goal_service),
+        AppConfig(),
+    )
+
+    repository.set_goal.assert_not_awaited()
+    message.answer.assert_awaited_once_with("Валюта — це код з трьох літер, напр. UAH.")
+
+
+@pytest.mark.asyncio
+async def test_goal_set_with_valid_currency_month_stores_amount() -> None:
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=7),
+        chat=SimpleNamespace(id=-100),
+        answer=AsyncMock(),
+    )
+    repository = SimpleNamespace(set_goal=AsyncMock())
+    goal_service = SimpleNamespace(progress=AsyncMock(), render=AsyncMock())
+
+    await goal_handler(
+        cast(Message, message),
+        CommandObject(command="goal", args="month 50000 USD"),
+        cast(RecordsRepository, repository),
+        cast(GoalService, goal_service),
+        AppConfig(),
+    )
+
+    repository.set_goal.assert_awaited_once_with(
+        -100, Decimal("50000"), "USD", 7, period="month"
+    )
+    message.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_goal_show_renders_progress() -> None:
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=7),

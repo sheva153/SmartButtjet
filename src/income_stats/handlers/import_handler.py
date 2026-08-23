@@ -19,7 +19,10 @@ import_router = Router(name="import")
 
 
 def _has_import_caption(caption: str | None) -> bool:
-    return bool(caption) and caption.startswith("/import")
+    if not caption:
+        return False
+    command = caption.split(maxsplit=1)[0].split("@")[0]
+    return command == "/import"
 
 
 def _record_from_row(
