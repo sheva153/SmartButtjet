@@ -17,6 +17,7 @@ Period = Literal[
     "last_month",
     "last_year",
 ]
+GoalPeriod = Literal["month", "year"]
 CHART_PERIODS: tuple[Period, ...] = (
     "week",
     "month",
@@ -159,9 +160,10 @@ class ChatSetting(BaseModel):
 
 
 class ChatGoal(BaseModel):
-    """Per-chat monthly income goal."""
+    """Per-chat income goal, keyed by period (month or year)."""
 
     chat_id: int
+    period: GoalPeriod = "month"
     amount: Decimal = Field(gt=0)
     currency: str = Field(min_length=3, max_length=3)
     updated_by: int

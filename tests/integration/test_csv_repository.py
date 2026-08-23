@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from income_stats.config import StorageConfig
 from income_stats.models import IncomeRecord, RecordNote
 from income_stats.repositories.records_repository import (
+    GOAL_COLUMNS,
     CsvRecordsRepository,
     RecordNotFoundError,
 )
@@ -389,6 +390,41 @@ async def test_async_set_and_get_goal(
 
     assert goal is not None
     assert goal.amount == Decimal("300")
+
+
+def test_month_and_year_goals_are_independent(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.set_goal_sync(1, Decimal("50000"), "UAH", 7, period="month")
+    csv_repository.set_goal_sync(1, Decimal("600000"), "UAH", 7, period="year")
+
+    assert csv_repository.get_goal_sync(1, "month").amount == Decimal("50000")  # type: ignore[union-attr]
+    assert csv_repository.get_goal_sync(1, "year").amount == Decimal("600000")  # type: ignore[union-attr]
+
+
+def _goal_row_without_period() -> dict[str, str]:
+    return {
+        "chat_id": "1",
+        "amount": "50000",
+        "currency": "UAH",
+        "updated_by": "7",
+        "updated_at": "2026-07-29T10:00:00+00:00",
+    }
+
+
+def test_legacy_goals_without_period_are_month(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    cols = [column for column in GOAL_COLUMNS if column != "period"]
+    frame = pd.DataFrame([_goal_row_without_period()], columns=cols)
+    csv_repository.goals_path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(csv_repository.goals_path, index=False)
+
+    goal = csv_repository.get_goal_sync(1, "month")
+
+    assert goal is not None
+    assert goal.amount > 0
+    assert goal.period == "month"
 
 
 def test_missing_csv_columns_are_reported(

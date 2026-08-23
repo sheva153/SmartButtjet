@@ -248,3 +248,9 @@ def test_chat_goal_rejects_non_positive_amount(amount: Decimal) -> None:
             currency="UAH",
             updated_by=7,
         )
+
+
+def test_chat_goal_defaults_to_month_period() -> None:
+    goal = ChatGoal(chat_id=1, amount=Decimal("10"), currency="UAH", updated_by=1)
+
+    assert goal.period == "month"

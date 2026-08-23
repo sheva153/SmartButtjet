@@ -6,7 +6,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from income_stats.models import ChatGoal, ChatSetting, IncomeRecord, RecordNote
+from income_stats.models import (
+    ChatGoal,
+    ChatSetting,
+    GoalPeriod,
+    IncomeRecord,
+    RecordNote,
+)
 from income_stats.repositories import RecordNotFoundError
 from income_stats.services.records_service import (
     EditLockError,
@@ -114,7 +120,9 @@ class FakeRecordsRepository:
             updated_by=updated_by,
         )
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None:
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
         return self.goals.get(chat_id)
 
     async def set_goal(
@@ -123,12 +131,14 @@ class FakeRecordsRepository:
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal:
         goal = ChatGoal(
             chat_id=chat_id,
             amount=amount,
             currency=currency,
             updated_by=updated_by,
+            period=period,
         )
         self.goals[chat_id] = goal
         return goal

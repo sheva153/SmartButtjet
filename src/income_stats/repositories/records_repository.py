@@ -20,6 +20,7 @@ from income_stats.config import StorageConfig
 from income_stats.models import (
     ChatGoal,
     ChatSetting,
+    GoalPeriod,
     IncomeRecord,
     RecordNote,
     normalize_label,
@@ -91,7 +92,9 @@ class RecordsRepository(Protocol):
         updated_by: int,
     ) -> ChatSetting: ...
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None: ...
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None: ...
 
     async def set_goal(
         self,
@@ -99,6 +102,7 @@ class RecordsRepository(Protocol):
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal: ...
 
 
@@ -162,6 +166,23 @@ class CsvRecordsRepository:
         if missing:
             raise ValueError(f"CSV {path} misses columns: {sorted(missing)}")
         return cast(pd.DataFrame, frame.loc[:, columns].copy())
+
+    def _read_goals(self) -> pd.DataFrame:
+        """Read goals.csv, backfilling a missing `period` column as "month".
+
+        Mirrors `_read`'s side-effect-free contract: legacy files predating
+        period-keyed goals are interpreted in memory only, never rewritten
+        here. Persistence happens exclusively on the write path.
+        """
+        if not self.goals_path.exists():
+            return pd.DataFrame(columns=GOAL_COLUMNS)
+        frame = self._read_existing(self.goals_path)
+        if "period" not in frame.columns:
+            frame["period"] = "month"
+        missing = set(GOAL_COLUMNS) - set(frame.columns)
+        if missing:
+            raise ValueError(f"CSV {self.goals_path} misses columns: {sorted(missing)}")
+        return cast(pd.DataFrame, frame.loc[:, GOAL_COLUMNS].copy())
 
     @staticmethod
     def _atomic_write(frame: pd.DataFrame, path: Path) -> None:
@@ -455,10 +476,14 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.chat_settings_path)
             return setting
 
-    def get_goal_sync(self, chat_id: int) -> ChatGoal | None:
+    def get_goal_sync(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
         with self._sync_lock:
-            frame = self._read(self.goals_path, GOAL_COLUMNS)
-            rows = frame[frame["chat_id"] == str(chat_id)]
+            frame = self._read_goals()
+            rows = frame[
+                (frame["chat_id"] == str(chat_id)) & (frame["period"] == period)
+            ]
             if rows.empty:
                 return None
             return ChatGoal.model_validate(rows.iloc[-1].to_dict())
@@ -469,17 +494,21 @@ class CsvRecordsRepository:
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal:
         with self._sync_lock:
-            frame = self._read(self.goals_path, GOAL_COLUMNS)
+            frame = self._read_goals()
             goal = ChatGoal(
                 chat_id=chat_id,
+                period=period,
                 amount=amount,
                 currency=currency,
                 updated_by=updated_by,
             )
             row = _to_row(goal)
-            indexes = frame.index[frame["chat_id"] == str(chat_id)].tolist()
+            indexes = frame.index[
+                (frame["chat_id"] == str(chat_id)) & (frame["period"] == period)
+            ].tolist()
             if indexes:
                 frame.loc[indexes[-1], GOAL_COLUMNS] = [
                     row[column] for column in GOAL_COLUMNS
@@ -548,9 +577,11 @@ class CsvRecordsRepository:
         async with self._async_lock:
             return self.set_chat_enabled_sync(chat_id, enabled, updated_by)
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None:
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
         async with self._async_lock:
-            return self.get_goal_sync(chat_id)
+            return self.get_goal_sync(chat_id, period)
 
     async def set_goal(
         self,
@@ -558,6 +589,7 @@ class CsvRecordsRepository:
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal:
         async with self._async_lock:
-            return self.set_goal_sync(chat_id, amount, currency, updated_by)
+            return self.set_goal_sync(chat_id, amount, currency, updated_by, period)
