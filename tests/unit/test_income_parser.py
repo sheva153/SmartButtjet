@@ -5,6 +5,7 @@ import pytest
 
 from income_stats.config.settings import IncomeConfig
 from income_stats.parsers.income_parser import (
+    detect_tags,
     find_protected_spans,
     parse_income_message,
 )
@@ -357,6 +358,38 @@ def test_taxonomy_aliases_are_word_bounded(income_config: IncomeConfig) -> None:
     parsed = parse_income_message("незп 500 псевдоборг", income_config)
 
     assert parsed[0].categories == ["other"]
+
+
+def test_extra_tags_are_merged_into_detected_tags(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "оплата 500 зал",
+        income_config,
+        extra_tags={"gym": ["зал", "спортзал"]},
+    )
+
+    assert parsed[0].tags == ["gym"]
+
+
+def test_detect_tags_finds_a_tag_by_its_alias() -> None:
+    taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
+
+    assert detect_tags("оплата на картку", taxonomy) == ["card"]
+
+
+def test_detect_tags_returns_empty_when_no_alias_matches() -> None:
+    taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
+
+    assert detect_tags("просто текст без ключових слів", taxonomy) == []
+
+
+def test_extra_tags_defaults_to_none_and_does_not_change_behavior(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message("зп 500 на картку", income_config)
+
+    assert parsed[0].tags == ["card"]
 
 
 @pytest.mark.parametrize(

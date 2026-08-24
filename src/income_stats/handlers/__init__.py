@@ -3,16 +3,31 @@
 from income_stats.handlers.admin_handler import admin_router
 from income_stats.handlers.analytics_handler import analytics_router
 from income_stats.handlers.goal_handler import goal_router
+from income_stats.handlers.import_handler import import_router
 from income_stats.handlers.income_handler import income_router
 from income_stats.handlers.records_handler import records_router
+from income_stats.handlers.retag_handler import retag_router
+from income_stats.handlers.tags_handler import tags_router
 
-routers = (records_router, admin_router, analytics_router, goal_router, income_router)
+routers = (
+    records_router,
+    admin_router,
+    analytics_router,
+    goal_router,
+    import_router,
+    tags_router,
+    retag_router,
+    income_router,
+)
 
 __all__ = [
     "admin_router",
     "analytics_router",
     "goal_router",
+    "import_router",
     "income_router",
     "records_router",
+    "retag_router",
     "routers",
+    "tags_router",
 ]

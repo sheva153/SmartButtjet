@@ -12,9 +12,11 @@ from plotly import graph_objects as go
 
 from income_stats.config import AnalyticsConfig, StorageConfig
 from income_stats.models import (
+    ChatGoal,
     ChatSetting,
     FunItem,
     FunSummaryConfig,
+    GoalPeriod,
     IncomeRecord,
     Period,
     RecordNote,
@@ -22,8 +24,9 @@ from income_stats.models import (
 )
 from income_stats.repositories import RecordsRepository
 from income_stats.services import analytics_service as analytics_module
+from income_stats.services import report_chart as report_chart_module
 from income_stats.services.admin_service import AdminService
-from income_stats.services.analytics_service import AnalyticsService
+from income_stats.services.analytics_service import AnalyticsService, build_fun_summary
 from income_stats.utils.files import temporary_artifacts
 
 
@@ -56,15 +59,32 @@ def make_record(
     )
 
 
+def _income(amount: Decimal) -> IncomeRecord:
+    return make_record("record", str(amount))
+
+
 class FakeAnalyticsRepository:
     def __init__(
         self,
         records: list[IncomeRecord],
         notes: list[RecordNote] | None = None,
+        goal: ChatGoal | None = None,
     ) -> None:
         self.records = records
         self.notes = notes or []
         self.enabled = True
+        self.goal = goal
+
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
+        if (
+            self.goal is not None
+            and self.goal.chat_id == chat_id
+            and self.goal.period == period
+        ):
+            return self.goal
+        return None
 
     async def list_records(self, chat_id: int) -> list[IncomeRecord]:
         return [record for record in self.records if record.chat_id == chat_id]
@@ -335,6 +355,143 @@ async def test_chart_builds_png_and_self_contained_html(
     assert first.html is not None and first.html.exists()
     assert "plotly" in first.html.read_text(encoding="utf-8").casefold()
     assert first != second
+
+
+async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository.goal = ChatGoal(
+        chat_id=-100, amount=Decimal("50000"), currency="UAH", updated_by=1
+    )
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    artifacts = await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
+
+    assert artifacts.png is not None and artifacts.png.read_bytes().startswith(
+        b"\x89PNG"
+    )
+    assert captured["kwargs"]["goal"] == Decimal("50000")
+    assert captured["kwargs"]["forecast"] is not None
+
+
+async def test_non_uah_goal_line_is_converted_to_uah_equivalent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bars render UAH-equivalent (to_uah); a USD goal/forecast line must be
+    # converted the same way, else it sits at the raw amount — off the bars by
+    # the FX factor.
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("usd1", "20", currency="USD"),
+            make_record("usd2", "30", currency="USD"),
+        ],
+        goal=ChatGoal(
+            chat_id=-100, amount=Decimal("1000"), currency="USD", updated_by=1
+        ),
+    )
+    config = AnalyticsConfig()
+    service = AnalyticsService(
+        as_repository(repository),
+        config,
+        StorageConfig(export_directory=tmp_path),
+    )
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await service.build_chart_artifacts(-100, "month", today=date(2026, 7, 29))
+
+    expected = report_chart_module.to_uah(Decimal("1000"), "USD", config.fx_to_uah)
+    assert captured["kwargs"]["goal"] == expected
+    assert captured["kwargs"]["goal"] != Decimal("1000")  # conversion happened
+    assert captured["kwargs"]["forecast"] is not None
+
+
+async def test_chart_threads_fx_into_png(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The renderer derives tag mixes from the frame itself; fx still must arrive."""
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await analytics_service.build_chart_artifacts(
+        -100, "month", today=date(2026, 7, 29)
+    )
+
+    assert captured["kwargs"]["fx"] == AnalyticsConfig().fx_to_uah
+
+
+async def test_year_chart_without_goal_passes_no_goal_line(
+    repository: FakeAnalyticsRepository,
+    analytics_service: AnalyticsService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await analytics_service.build_chart_artifacts(-100, "year", today=date(2026, 7, 29))
+
+    assert captured["kwargs"]["goal"] is None
+    assert captured["kwargs"]["forecast"] is None
+
+
+async def test_mixed_currency_month_chart_skips_goal_line_to_avoid_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("uah", "500", currency="UAH"),
+            make_record("usd", "20", currency="USD"),
+        ],
+        goal=ChatGoal(
+            chat_id=-100, amount=Decimal("50000"), currency="UAH", updated_by=1
+        ),
+    )
+    service = AnalyticsService(
+        as_repository(repository),
+        AnalyticsConfig(),
+        StorageConfig(export_directory=tmp_path),
+    )
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await service.build_chart_artifacts(-100, "month", today=date(2026, 7, 29))
+
+    assert captured["kwargs"]["goal"] is None
+    assert captured["kwargs"]["forecast"] is None
 
 
 async def test_chart_failure_falls_back_to_html(
@@ -627,6 +784,21 @@ def test_fun_summary_skips_comparisons_for_foreign_currency() -> None:
     assert service.fun_summary(make_record("record", "500", currency="USD")) == (
         "Красиво!"
     )
+
+
+def test_luxury_item_shows_half_then_whole() -> None:
+    rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
+    cfg = FunSummaryConfig(items={"rolex": rolex}, phrases=["x"])
+    half = build_fun_summary(_income(Decimal("250000")), cfg)  # 0.5*price ≤ amt < price
+    whole = build_fun_summary(_income(Decimal("500000")), cfg)  # amt ≥ price
+    assert "0.5 Rolex" in half
+    assert "1 Rolex" in whole
+
+
+def test_luxury_hidden_below_half_price() -> None:
+    rolex = FunItem(label="Rolex", emoji="⌚", price_uah=Decimal("400000"), luxury=True)
+    cfg = FunSummaryConfig(items={"rolex": rolex}, phrases=["x"])
+    assert "Rolex" not in build_fun_summary(_income(Decimal("100000")), cfg)
 
 
 def test_fun_summary_uses_number_ending() -> None:

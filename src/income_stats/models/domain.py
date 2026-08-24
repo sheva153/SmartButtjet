@@ -17,6 +17,7 @@ Period = Literal[
     "last_month",
     "last_year",
 ]
+GoalPeriod = Literal["month", "year"]
 CHART_PERIODS: tuple[Period, ...] = (
     "week",
     "month",
@@ -44,7 +45,7 @@ def _normalize_labels(values: list[str], *, fallback: str | None) -> list[str]:
     return labels
 
 
-def _normalize_currency(value: object) -> str:
+def normalize_currency(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("Currency must be a three-letter code")
     currency = value.strip().upper()
@@ -67,7 +68,7 @@ class ParsedIncome(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -116,7 +117,7 @@ class IncomeRecord(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -149,6 +150,34 @@ class RecordNote(BaseModel):
         return value
 
 
+class TagAlias(BaseModel):
+    """A runtime-defined tag and the message aliases that detect it."""
+
+    tag: str
+    aliases: list[str] = Field(default_factory=list)
+    updated_by: int
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def normalize_tag(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Tag must be a string")
+        return normalize_label(value)
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def normalize_aliases(cls, values: object) -> list[str]:
+        if not isinstance(values, list):
+            raise ValueError("Aliases must be a list")
+        normalized: list[str] = []
+        for alias in values:
+            if not isinstance(alias, str) or not alias.strip():
+                raise ValueError("Aliases must not be blank")
+            normalized.append(alias.strip().casefold())
+        return list(dict.fromkeys(normalized))
+
+
 class ChatSetting(BaseModel):
     """Per-chat income recording state."""
 
@@ -159,9 +188,10 @@ class ChatSetting(BaseModel):
 
 
 class ChatGoal(BaseModel):
-    """Per-chat monthly income goal."""
+    """Per-chat income goal, keyed by period (month or year)."""
 
     chat_id: int
+    period: GoalPeriod = "month"
     amount: Decimal = Field(gt=0)
     currency: str = Field(min_length=3, max_length=3)
     updated_by: int
@@ -170,7 +200,7 @@ class ChatGoal(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
 
 class GoalConfig(BaseModel):
@@ -196,6 +226,7 @@ class FunItem(BaseModel):
     emoji: str
     price_uah: Decimal = Field(gt=0)
     fractional: bool = False
+    luxury: bool = False
 
 
 class FunSummaryConfig(BaseModel):

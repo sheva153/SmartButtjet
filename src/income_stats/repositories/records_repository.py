@@ -6,12 +6,12 @@ import asyncio
 import json
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol, cast, runtime_checkable
+from typing import NamedTuple, Protocol, cast, runtime_checkable
 
 import pandas as pd
 from pydantic import BaseModel
@@ -20,8 +20,10 @@ from income_stats.config import StorageConfig
 from income_stats.models import (
     ChatGoal,
     ChatSetting,
+    GoalPeriod,
     IncomeRecord,
     RecordNote,
+    TagAlias,
     normalize_label,
 )
 
@@ -29,6 +31,7 @@ RECORD_COLUMNS = list(IncomeRecord.model_fields)
 NOTE_COLUMNS = list(RecordNote.model_fields)
 CHAT_SETTING_COLUMNS = list(ChatSetting.model_fields)
 GOAL_COLUMNS = list(ChatGoal.model_fields)
+TAG_COLUMNS = list(TagAlias.model_fields)
 EDITABLE_RECORD_FIELDS = frozenset(
     {
         "amount",
@@ -46,6 +49,14 @@ _CSV_READ_ERRORS = (
     pd.errors.ParserError,
     pd.errors.EmptyDataError,
 )
+
+
+class RetagResult(NamedTuple):
+    """Outcome of a bulk retag pass: totals plus each record's added tags."""
+
+    changed: int
+    total: int
+    deltas: list[tuple[IncomeRecord, list[str]]]
 
 
 class RecordNotFoundError(LookupError):
@@ -91,7 +102,9 @@ class RecordsRepository(Protocol):
         updated_by: int,
     ) -> ChatSetting: ...
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None: ...
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None: ...
 
     async def set_goal(
         self,
@@ -99,7 +112,27 @@ class RecordsRepository(Protocol):
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal: ...
+
+    async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]: ...
+
+    async def retag_records(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult: ...
+
+    async def list_tags(self) -> dict[str, list[str]]: ...
+
+    async def add_tag(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias: ...
 
 
 def _encode_cell(value: object) -> str:
@@ -127,7 +160,7 @@ def _decode_string_list(value: object, *, field: str) -> list[str]:
 
 
 class CsvRecordsRepository:
-    """Persist records, notes, and chat settings in atomic CSV files.
+    """Persist records, notes, chat settings, goals, and tags in atomic CSV files.
 
     Async adapters deliberately execute these small local-file critical
     sections directly: the asyncio lock serializes service callers, while the
@@ -139,6 +172,7 @@ class CsvRecordsRepository:
         self.notes_path = config.notes_file
         self.chat_settings_path = config.chat_settings_file
         self.goals_path = config.goals_file
+        self.tags_path = config.tags_file
         self.export_directory = config.export_directory
         self._async_lock = asyncio.Lock()
         self._sync_lock = threading.RLock()
@@ -154,14 +188,33 @@ class CsvRecordsRepository:
             raise ValueError(f"Cannot read CSV {path}: {error}") from error
 
     @classmethod
-    def _read(cls, path: Path, columns: list[str]) -> pd.DataFrame:
+    def _read(
+        cls,
+        path: Path,
+        columns: list[str],
+        defaults: dict[str, str] | None = None,
+    ) -> pd.DataFrame:
         if not path.exists():
             return pd.DataFrame(columns=columns)
         frame = cls._read_existing(path)
+        # Backfill legacy files missing a newer column with a constant, in
+        # memory only — persistence stays on the write path.
+        for column, value in (defaults or {}).items():
+            if column not in frame.columns:
+                frame[column] = value
         missing = set(columns) - set(frame.columns)
         if missing:
             raise ValueError(f"CSV {path} misses columns: {sorted(missing)}")
         return cast(pd.DataFrame, frame.loc[:, columns].copy())
+
+    def _read_goals(self) -> pd.DataFrame:
+        """Read goals.csv, backfilling a missing `period` column as "month".
+
+        Legacy files predating period-keyed goals are interpreted in memory
+        only, never rewritten here (see `_read`); persistence happens on the
+        write path.
+        """
+        return self._read(self.goals_path, GOAL_COLUMNS, defaults={"period": "month"})
 
     @staticmethod
     def _atomic_write(frame: pd.DataFrame, path: Path) -> None:
@@ -309,6 +362,100 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.records_path)
             return record
 
+    def import_records_sync(self, records: list[IncomeRecord]) -> tuple[int, int]:
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            existing = set(
+                zip(
+                    frame["chat_id"],
+                    frame["telegram_message_id"],
+                    frame["source_index"],
+                    strict=False,
+                )
+            )
+            added = 0
+            skipped = 0
+            new_rows = []
+            for record in records:
+                key = (
+                    str(record.chat_id),
+                    str(record.telegram_message_id),
+                    str(record.source_index),
+                )
+                if key in existing:
+                    skipped += 1
+                    continue
+                existing.add(key)
+                new_rows.append(_to_row(record))
+                added += 1
+            if new_rows:
+                frame = pd.concat(
+                    [frame, pd.DataFrame(new_rows, columns=RECORD_COLUMNS)],
+                    ignore_index=True,
+                )
+                self._atomic_write(frame, self.records_path)
+            return added, skipped
+
+    def list_all_records_sync(self, chat_id: int | None = None) -> list[IncomeRecord]:
+        """List every record, optionally scoped to one chat.
+
+        Read-only, side-effect free.
+        """
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            if chat_id is not None:
+                frame = frame[frame["chat_id"] == str(chat_id)]
+            return [self._record_from_row(row.to_dict()) for _, row in frame.iterrows()]
+
+    def retag_records_sync(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult:
+        """Retroactively union newly detected tags into existing records.
+
+        `detect` is injected (the parser's `detect_tags`) so this repository
+        never imports the parsing layer. Existing tags are never removed;
+        detected tags are only added, deduped, in encounter order. Every
+        changed row is folded into a single atomic write. The returned
+        deltas list the net-new tags added per changed record, in encounter
+        order, for a caller to report what changed.
+        """
+        with self._sync_lock:
+            frame = self._read_records_unlocked()
+            scope = (
+                frame if chat_id is None else frame[frame["chat_id"] == str(chat_id)]
+            )
+            total = len(scope)
+            changed = 0
+            deltas: list[tuple[IncomeRecord, list[str]]] = []
+            for index in scope.index:
+                record = self._record_from_row(frame.loc[index].to_dict())
+                detected = [
+                    normalize_label(label)
+                    for label in detect(record.original_text, taxonomy)
+                ]
+                added_tags = [tag for tag in detected if tag not in record.tags]
+                if not added_tags:
+                    continue
+                merged_tags = list(dict.fromkeys([*record.tags, *added_tags]))
+                # model_copy skips the normalize_tags validator, but merged_tags
+                # is already normalized (existing tags were validated on load;
+                # detected ones via normalize_label above) and deduped, so the
+                # validator would be a no-op here.
+                updated = record.model_copy(update={"tags": merged_tags})
+                row = _to_row(updated)
+                frame.loc[index, RECORD_COLUMNS] = [
+                    row[column] for column in RECORD_COLUMNS
+                ]
+                changed += 1
+                deltas.append((updated, added_tags))
+            if changed:
+                self._atomic_write(frame, self.records_path)
+            return RetagResult(changed=changed, total=total, deltas=deltas)
+
     def update_record_sync(
         self,
         record_id: str,
@@ -455,10 +602,14 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.chat_settings_path)
             return setting
 
-    def get_goal_sync(self, chat_id: int) -> ChatGoal | None:
+    def get_goal_sync(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
         with self._sync_lock:
-            frame = self._read(self.goals_path, GOAL_COLUMNS)
-            rows = frame[frame["chat_id"] == str(chat_id)]
+            frame = self._read_goals()
+            rows = frame[
+                (frame["chat_id"] == str(chat_id)) & (frame["period"] == period)
+            ]
             if rows.empty:
                 return None
             return ChatGoal.model_validate(rows.iloc[-1].to_dict())
@@ -469,17 +620,21 @@ class CsvRecordsRepository:
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal:
         with self._sync_lock:
-            frame = self._read(self.goals_path, GOAL_COLUMNS)
+            frame = self._read_goals()
             goal = ChatGoal(
                 chat_id=chat_id,
+                period=period,
                 amount=amount,
                 currency=currency,
                 updated_by=updated_by,
             )
             row = _to_row(goal)
-            indexes = frame.index[frame["chat_id"] == str(chat_id)].tolist()
+            indexes = frame.index[
+                (frame["chat_id"] == str(chat_id)) & (frame["period"] == period)
+            ].tolist()
             if indexes:
                 frame.loc[indexes[-1], GOAL_COLUMNS] = [
                     row[column] for column in GOAL_COLUMNS
@@ -495,9 +650,67 @@ class CsvRecordsRepository:
             self._atomic_write(frame, self.goals_path)
             return goal
 
+    def list_tags_sync(self) -> dict[str, list[str]]:
+        with self._sync_lock:
+            frame = self._read(self.tags_path, TAG_COLUMNS)
+            tags: dict[str, list[str]] = {}
+            for _, row in frame.iterrows():
+                payload = row.to_dict()
+                tags[payload["tag"]] = _decode_string_list(
+                    payload["aliases"], field="aliases"
+                )
+            return tags
+
+    def add_tag_sync(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias:
+        with self._sync_lock:
+            frame = self._read(self.tags_path, TAG_COLUMNS)
+            canonical = normalize_label(tag)
+            indexes = frame.index[frame["tag"] == canonical].tolist()
+            existing_aliases = (
+                _decode_string_list(frame.loc[indexes[-1], "aliases"], field="aliases")
+                if indexes
+                else []
+            )
+            tag_alias = TagAlias(
+                tag=canonical,
+                aliases=[*existing_aliases, *aliases],
+                updated_by=updated_by,
+            )
+            row = _to_row(tag_alias)
+            if indexes:
+                frame.loc[indexes[-1], TAG_COLUMNS] = [
+                    row[column] for column in TAG_COLUMNS
+                ]
+            else:
+                frame = pd.concat(
+                    [frame, pd.DataFrame([row], columns=TAG_COLUMNS)],
+                    ignore_index=True,
+                )
+            self._atomic_write(frame, self.tags_path)
+            return tag_alias
+
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         async with self._async_lock:
             return self.create_record_sync(record)
+
+    async def import_records(self, records: list[IncomeRecord]) -> tuple[int, int]:
+        async with self._async_lock:
+            return self.import_records_sync(records)
+
+    async def retag_records(
+        self,
+        taxonomy: dict[str, list[str]],
+        detect: Callable[[str, dict[str, list[str]]], list[str]],
+        *,
+        chat_id: int | None = None,
+    ) -> RetagResult:
+        async with self._async_lock:
+            return self.retag_records_sync(taxonomy, detect, chat_id=chat_id)
 
     async def get_record(self, record_id: str) -> IncomeRecord | None:
         async with self._async_lock:
@@ -548,9 +761,11 @@ class CsvRecordsRepository:
         async with self._async_lock:
             return self.set_chat_enabled_sync(chat_id, enabled, updated_by)
 
-    async def get_goal(self, chat_id: int) -> ChatGoal | None:
+    async def get_goal(
+        self, chat_id: int, period: GoalPeriod = "month"
+    ) -> ChatGoal | None:
         async with self._async_lock:
-            return self.get_goal_sync(chat_id)
+            return self.get_goal_sync(chat_id, period)
 
     async def set_goal(
         self,
@@ -558,6 +773,20 @@ class CsvRecordsRepository:
         amount: Decimal,
         currency: str,
         updated_by: int,
+        period: GoalPeriod = "month",
     ) -> ChatGoal:
         async with self._async_lock:
-            return self.set_goal_sync(chat_id, amount, currency, updated_by)
+            return self.set_goal_sync(chat_id, amount, currency, updated_by, period)
+
+    async def list_tags(self) -> dict[str, list[str]]:
+        async with self._async_lock:
+            return self.list_tags_sync()
+
+    async def add_tag(
+        self,
+        tag: str,
+        aliases: list[str],
+        updated_by: int,
+    ) -> TagAlias:
+        async with self._async_lock:
+            return self.add_tag_sync(tag, aliases, updated_by)

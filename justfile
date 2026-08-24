@@ -52,6 +52,56 @@ analytics chat_id period="month":
 export chat_id:
     uv run python main.py export --chat-id "{{chat_id}}"
 
+chats:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmd=(uv run python main.py chats)
+    echo "→ ${cmd[*]}" >&2
+    rc=0
+    "${cmd[@]}" || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "  OK" >&2; else echo "  FAIL ($rc)" >&2; fi
+    exit $rc
+
+# Pick a chat (gum -> fzf -> all-records fallback) then run a chat-scoped
+# `main.py <action>` with the loud OK/FAIL wrapper. Private helper shared by
+# `records` and `retag` so the picker lives in one place.
+_scoped action header chat_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    chat_id="{{chat_id}}"
+    if [[ -z "$chat_id" && -t 1 ]]; then
+        if command -v gum >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | gum filter --placeholder="{{header}}" || true)"
+        elif command -v fzf >/dev/null 2>&1; then
+            picked="$(uv run python main.py chats | fzf --prompt='chat_id> ' --header="{{header}}" || true)"
+        else
+            picked=""
+        fi
+        if [[ -n "${picked:-}" ]]; then
+            chat_id="$(awk '{print $1}' <<< "$picked")"
+        fi
+    fi
+    if [[ -n "$chat_id" ]]; then
+        cmd=(uv run python main.py "{{action}}" --chat-id "$chat_id")
+    else
+        cmd=(uv run python main.py "{{action}}")
+    fi
+    echo "→ ${cmd[*]}" >&2
+    rc=0
+    "${cmd[@]}" || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "  OK" >&2; else echo "  FAIL ($rc)" >&2; fi
+    exit $rc
+
+# Review all records (optionally one chat; interactive picker when no chat_id).
+records chat_id="":
+    echo "━━━ just ━━━  just _scoped records 'select a chat to review' {{chat_id}}" >&2
+    just _scoped records 'select a chat to review' "{{chat_id}}"
+
+# Backfill tags across records (optionally one chat; interactive picker).
+retag chat_id="":
+    echo "━━━ just ━━━  just _scoped retag 'select a chat to retag' {{chat_id}}" >&2
+    just _scoped retag 'select a chat to retag' "{{chat_id}}"
+
 tmux-setup:
     tmux source-file -n "$HOME/.tmux.conf"
     tmux source-file "$HOME/.tmux.conf"

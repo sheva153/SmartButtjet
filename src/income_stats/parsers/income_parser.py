@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 
 from income_stats.config.settings import IncomeConfig
-from income_stats.models.domain import ParsedIncome
+from income_stats.models.domain import ParsedIncome, normalize_label
 
 CURRENCY_ALIASES = {
     "₴": "UAH",
@@ -395,6 +395,16 @@ def _detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
     ]
 
 
+def detect_tags(text: str, taxonomy: dict[str, list[str]]) -> list[str]:
+    """Detect tag labels whose aliases appear in `text`.
+
+    Thin public wrapper around `_detect_labels` for callers outside parsing
+    (e.g. a retroactive-retagging CLI) that need alias detection without
+    running the full income parse.
+    """
+    return _detect_labels(text, taxonomy)
+
+
 def _income_date(context: _ProtectedContext, current_date: date) -> date:
     if context.absolute_dates:
         return context.absolute_dates[0]
@@ -418,13 +428,42 @@ def _without_spans(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(characters)
 
 
+def merge_extra_tags(
+    tags: dict[str, list[str]],
+    extra_tags: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    """Extend a canonical tag taxonomy with runtime-defined tag aliases.
+
+    Each tag in `extra_tags` extends the same canonical label's alias list
+    (deduped), rather than overwriting the configured taxonomy.
+    """
+    if not extra_tags:
+        return tags
+    merged = {label: list(aliases) for label, aliases in tags.items()}
+    for tag, aliases in extra_tags.items():
+        canonical = normalize_label(tag)
+        normalized_aliases = [
+            alias.strip().casefold() for alias in aliases if alias.strip()
+        ]
+        merged[canonical] = list(
+            dict.fromkeys([*merged.get(canonical, []), *normalized_aliases])
+        )
+    return merged
+
+
 def parse_income_message(
     text: str,
     config: IncomeConfig,
     *,
     today: date | None = None,
+    extra_tags: dict[str, list[str]] | None = None,
 ) -> list[ParsedIncome]:
-    """Parse every unprotected amount in a message as income or expense."""
+    """Parse every unprotected amount in a message as income or expense.
+
+    `extra_tags` merges runtime-defined tag aliases (e.g. from a persistent
+    tag store) on top of `config.tags` before label detection, without
+    mutating the configured taxonomy.
+    """
     current_date = today or datetime.now(UTC).date()
     # Neutralize a leading minus (offset-preserving: one char -> one space) so the
     # digits after it can still be matched as money; MONEY_PATTERN's lookbehind
@@ -446,7 +485,7 @@ def parse_income_message(
         return []
 
     categories = _detect_labels(text, config.categories) or ["other"]
-    tags = _detect_labels(text, config.tags)
+    tags = _detect_labels(text, merge_extra_tags(config.tags, extra_tags))
     removed_spans = [match.span() for match, _ in candidates]
     removed_spans.extend(
         typo[1]

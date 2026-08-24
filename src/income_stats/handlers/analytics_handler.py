@@ -1,12 +1,14 @@
 """Analytics, dual-chart, and export Telegram handlers."""
 
 import asyncio
+from contextlib import suppress
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from loguru import logger
@@ -120,6 +122,8 @@ async def chart_period_callback(
         return
     period = cast(Period, callback_data.period)
     logger.bind(chat_id=query.message.chat.id, period=period).info("Chart requested")
+    with suppress(TelegramBadRequest):
+        await query.message.delete()
     try:
         await send_chart(query.message, analytics_service, period)
     except ValueError:
