@@ -26,6 +26,7 @@ from matplotlib import patheffects
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
+from matplotlib.legend import Legend
 from matplotlib.legend_handler import HandlerBase
 from matplotlib.patches import Patch, Rectangle
 
@@ -216,6 +217,27 @@ def _colours(tags: list[str]) -> list[str]:
     ]
 
 
+def _combo_totals_by_kind(
+    combo_total: dict[tuple[str, tuple[str, ...]], float],
+    kind: str,
+) -> list[tuple[tuple[str, ...], float]]:
+    """Return (tag-combo, total) pairs for one kind, sorted by total descending.
+
+    Keeps the "Мікси тегів" legend split into an income section and an
+    expense section instead of one list mixing both, since a tag-mix total
+    only makes sense within a single kind.
+    """
+    return sorted(
+        (
+            (combo, total)
+            for (entry_kind, combo), total in combo_total.items()
+            if entry_kind == kind
+        ),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+
+
 _LABEL_FIT_RATIO = 0.06  # min bar height, as a fraction of the y-axis span, to fit text
 _LABEL_OUTSIDE_OFFSET_RATIO = 0.015
 
@@ -310,7 +332,7 @@ def render_report_png(
     bar_width = 0.64
     gradient = np.linspace(0, 1, 256).reshape(1, -1)
     bases: dict[tuple[int, str], float] = {}
-    combo_total: dict[tuple[str, ...], float] = {}
+    combo_total: dict[tuple[str, tuple[str, ...]], float] = {}
     currency_total: dict[str, float] = {}
     income_total = expense_total = 0.0
     lo = hi = 0.0
@@ -360,7 +382,8 @@ def render_report_png(
         bases[(slot, kind)] = y1
         lo, hi = min(lo, y_low), max(hi, y_high)
         combo = tuple(sorted(record_tags, key=lambda tag: _ORDER.get(tag, 99)))
-        combo_total[combo] = combo_total.get(combo, 0.0) + uah
+        combo_key = (kind, combo)
+        combo_total[combo_key] = combo_total.get(combo_key, 0.0) + uah
         currency_total[currency] = currency_total.get(currency, 0.0) + uah
         if kind == "income":
             income_total += uah
@@ -452,32 +475,44 @@ def render_report_png(
     )
     axes.add_artist(together)
 
-    combos = sorted(combo_total, key=lambda combo: combo_total[combo], reverse=True)
-    proxies: list[Patch] = []
-    handler_map: dict[Patch, MixHandler] = {}
-    for combo in combos:
-        proxy = Patch(
-            label=(
-                f"{' + '.join(_label(tag) for tag in combo)}"
-                f" — {_format_amount(combo_total[combo])} ₴"
+    # Income and expense tag-mixes get their own legend each — a combo total
+    # only means something within one kind, so mixing them in one list would
+    # silently add income and expense amounts together.
+    legends: list[Legend] = [together]
+    next_y = 0.86
+    for kind, mix_title in (
+        ("income", "Мікси тегів — дохід (₴-екв)"),
+        ("expense", "Мікси тегів — витрати (₴-екв)"),
+    ):
+        entries = _combo_totals_by_kind(combo_total, kind)
+        if not entries:
+            continue
+        proxies = [
+            Patch(
+                label=f"{' + '.join(_label(tag) for tag in combo)}"
+                f" — {_format_amount(total)} ₴"
             )
+            for combo, total in entries
+        ]
+        handler_map = {
+            proxy: MixHandler(_colours(list(combo)))
+            for proxy, (combo, _total) in zip(proxies, entries, strict=True)
+        }
+        mix_legend = axes.legend(
+            handles=proxies,
+            handler_map=handler_map,
+            title=mix_title,
+            loc="upper left",
+            bbox_to_anchor=(1.01, next_y),
+            fontsize=8,
+            title_fontsize=9,
+            borderaxespad=0.0,
+            handlelength=2.2,
         )
-        proxies.append(proxy)
-        handler_map[proxy] = MixHandler(_colours(list(combo)))
-    mixes = axes.legend(
-        handles=proxies,
-        handler_map=handler_map,
-        title="Мікси тегів (сума ₴-екв)",
-        loc="upper left",
-        bbox_to_anchor=(1.01, 0.86),
-        fontsize=8,
-        title_fontsize=9,
-        borderaxespad=0.0,
-        handlelength=2.2,
-    )
-    axes.add_artist(mixes)
+        axes.add_artist(mix_legend)
+        legends.append(mix_legend)
+        next_y -= (len(entries) + 1.8) * 0.052
 
-    currency_y = 0.86 - (len(combos) + 1.8) * 0.052
     currencies_legend = axes.legend(
         handles=[
             Patch(
@@ -489,13 +524,13 @@ def render_report_png(
         ],
         title="Валюта (₴-екв)",
         loc="upper left",
-        bbox_to_anchor=(1.01, currency_y),
+        bbox_to_anchor=(1.01, next_y),
         fontsize=8,
         title_fontsize=9,
         borderaxespad=0.0,
     )
     axes.add_artist(currencies_legend)
+    legends.append(currencies_legend)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    legends = [together, mixes, currencies_legend]
     figure.savefig(path, bbox_inches="tight", bbox_extra_artists=legends)

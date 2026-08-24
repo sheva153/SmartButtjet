@@ -441,6 +441,47 @@ def test_value_label_handles_zero_span_without_crashing() -> None:
     assert position == 50.0
 
 
+def test_combo_totals_by_kind_splits_income_and_expense() -> None:
+    from income_stats.services.report_chart import _combo_totals_by_kind
+
+    combo_total = {
+        ("income", ("card",)): 500.0,
+        ("expense", ("rent",)): 300.0,
+        ("income", ("cash",)): 1200.0,
+    }
+
+    income = _combo_totals_by_kind(combo_total, "income")
+    expense = _combo_totals_by_kind(combo_total, "expense")
+
+    assert income == [(("cash",), 1200.0), (("card",), 500.0)]
+    assert expense == [(("rent",), 300.0)]
+
+
+def test_combo_totals_by_kind_returns_empty_for_missing_kind() -> None:
+    from income_stats.services.report_chart import _combo_totals_by_kind
+
+    assert _combo_totals_by_kind({("income", ("card",)): 500.0}, "expense") == []
+
+
+def test_render_still_works_with_only_one_kind_present(tmp_path: Path) -> None:
+    """No expense records at all: the expense mix legend must not error out."""
+    frame = pd.DataFrame(
+        [
+            _record(
+                income_date=date(2026, 8, 17),
+                amount="500",
+                currency="UAH",
+                tags=["card"],
+                kind="income",
+            ),
+        ],
+        columns=list(IncomeRecord.model_fields),
+    )
+    path = tmp_path / "income-only.png"
+    render_report_png(frame, "week", date(2026, 8, 17), path, fx=_FX)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
 def test_tag_maps_cover_config_tags() -> None:
     # The chart colours/labels tags by their `income.tags` key. If the shipped
     # config gains a tag the maps don't know, it renders grey with a raw
