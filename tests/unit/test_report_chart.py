@@ -353,6 +353,94 @@ def test_render_untagged_record_uses_no_tag_sentinel(tmp_path: Path) -> None:
     assert path.read_bytes().startswith(b"\x89PNG")
 
 
+def test_no_tag_colour_depends_on_kind() -> None:
+    from income_stats.services.report_chart import (
+        NO_TAG_EXPENSE,
+        NO_TAG_INCOME,
+        _colours,
+    )
+
+    assert _colours([NO_TAG_INCOME]) == ["#1f6feb"]
+    assert _colours([NO_TAG_EXPENSE]) == ["#f85149"]
+
+
+def test_no_tag_income_and_expense_labels_are_ukrainian() -> None:
+    from income_stats.services.report_chart import NO_TAG_EXPENSE, NO_TAG_INCOME, _label
+
+    assert _label(NO_TAG_INCOME) == "Без тегу"
+    assert _label(NO_TAG_EXPENSE) == "Без тегу"
+
+
+def test_tag_colours_never_use_the_reserved_no_tag_hues() -> None:
+    # Blue and red are reserved for "no tag" income/expense defaults; a real
+    # tag colliding with either would be visually confused with that default.
+    reserved = {"#1f6feb", "#f85149"}
+    assert not reserved & set(TAG_COLOR.values())
+
+
+def test_untagged_income_and_expense_render_with_distinct_colours(
+    tmp_path: Path,
+) -> None:
+    frame = pd.DataFrame(
+        [
+            _record(
+                income_date=date(2026, 8, 17),
+                amount="1000",
+                currency="UAH",
+                tags=[],
+                kind="income",
+            ),
+            _record(
+                income_date=date(2026, 8, 17),
+                amount="500",
+                currency="UAH",
+                tags=[],
+                kind="expense",
+            ),
+        ],
+        columns=list(IncomeRecord.model_fields),
+    )
+    path = tmp_path / "untagged-both.png"
+    render_report_png(frame, "week", date(2026, 8, 17), path, fx=_FX)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_value_label_centers_inside_a_tall_bar() -> None:
+    from income_stats.services.report_chart import _value_label
+
+    position, alignment = _value_label(0.0, 1000.0, span=2000.0)
+
+    assert alignment == "center"
+    assert position == 500.0
+
+
+def test_value_label_moves_outside_a_short_income_bar() -> None:
+    from income_stats.services.report_chart import _value_label
+
+    position, alignment = _value_label(0.0, 10.0, span=2000.0)
+
+    assert alignment == "bottom"
+    assert position > 10.0
+
+
+def test_value_label_moves_outside_a_short_expense_bar() -> None:
+    from income_stats.services.report_chart import _value_label
+
+    position, alignment = _value_label(0.0, -10.0, span=2000.0)
+
+    assert alignment == "top"
+    assert position < -10.0
+
+
+def test_value_label_handles_zero_span_without_crashing() -> None:
+    from income_stats.services.report_chart import _value_label
+
+    position, alignment = _value_label(0.0, 100.0, span=0.0)
+
+    assert alignment == "center"
+    assert position == 50.0
+
+
 def test_tag_maps_cover_config_tags() -> None:
     # The chart colours/labels tags by their `income.tags` key. If the shipped
     # config gains a tag the maps don't know, it renders grey with a raw

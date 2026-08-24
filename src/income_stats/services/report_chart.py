@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from matplotlib import patheffects
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
@@ -64,9 +65,13 @@ TAG_LABELS = {
     "education": "Навчання",
 }
 TAG_COLOR = {
-    "card": "#1f6feb",
+    # Blue and red are reserved for the "no tag" income/expense default (see
+    # NO_TAG_INCOME / NO_TAG_EXPENSE below), so no real tag may use either —
+    # test_tag_colours_never_use_the_reserved_no_tag_hues in
+    # tests/unit/test_report_chart.py locks this in.
+    "card": "#85d039",
     "cash": "#2ea043",
-    "rent": "#f85149",
+    "rent": "#39d0a8",
     "utilities": "#d29922",
     "dentistry": "#e3b341",
     "health": "#f778ba",
@@ -74,10 +79,22 @@ TAG_COLOR = {
     "transport": "#39c5cf",
     "cafe": "#a371f7",
     "subscriptions": "#bc8cff",
-    "education": "#58a6ff",
+    "education": "#c939d0",
 }
 NO_TAG = ("_none", "Без тегу", "#8b949e")
-_ORDER = {tag: index for index, tag in enumerate([*TAG_LABELS, NO_TAG[0]])}
+# Untagged records default to blue (income) / red (expense) rather than a
+# single neutral grey, so a bar's colour always tells you income vs expense
+# even with no tag attached.
+NO_TAG_INCOME = "_none_income"
+NO_TAG_EXPENSE = "_none_expense"
+_NO_TAG_VARIANTS: dict[str, tuple[str, str]] = {
+    NO_TAG_INCOME: (NO_TAG[1], "#1f6feb"),
+    NO_TAG_EXPENSE: (NO_TAG[1], "#f85149"),
+}
+_ORDER = {
+    tag: index
+    for index, tag in enumerate([*TAG_LABELS, NO_TAG[0], NO_TAG_INCOME, NO_TAG_EXPENSE])
+}
 
 
 def _period_buckets(
@@ -185,11 +202,38 @@ def _format_amount(value: float) -> str:
 
 def _label(tag: str) -> str:
     """Return the plain Ukrainian display name for a tag (no emoji glyphs)."""
+    if tag in _NO_TAG_VARIANTS:
+        return _NO_TAG_VARIANTS[tag][0]
     return TAG_LABELS.get(tag, NO_TAG[1] if tag == NO_TAG[0] else tag)
 
 
 def _colours(tags: list[str]) -> list[str]:
-    return [TAG_COLOR.get(tag, NO_TAG[2]) for tag in tags]
+    return [
+        _NO_TAG_VARIANTS[tag][1]
+        if tag in _NO_TAG_VARIANTS
+        else TAG_COLOR.get(tag, NO_TAG[2])
+        for tag in tags
+    ]
+
+
+_LABEL_FIT_RATIO = 0.06  # min bar height, as a fraction of the y-axis span, to fit text
+_LABEL_OUTSIDE_OFFSET_RATIO = 0.015
+
+
+def _value_label(y0: float, y1: float, span: float) -> tuple[float, str]:
+    """Return the (y-position, vertical-alignment) for one bar's value label.
+
+    Centered inside the bar when it's tall enough to hold the text; otherwise
+    placed just outside the bar, on the side away from zero (above for an
+    income bar growing up, below for an expense bar growing down).
+    """
+    height = abs(y1 - y0)
+    if span <= 0 or height >= span * _LABEL_FIT_RATIO:
+        return (y0 + y1) / 2, "center"
+    offset = span * _LABEL_OUTSIDE_OFFSET_RATIO
+    if y1 >= y0:
+        return y1 + offset, "bottom"
+    return y1 - offset, "top"
 
 
 @cache
@@ -284,7 +328,9 @@ def render_report_png(
             continue
         uah = float(to_uah(amount, currency, fx))
         height = uah if kind == "income" else -uah
-        record_tags = list(tags) or [NO_TAG[0]]
+        record_tags = list(tags) or [
+            NO_TAG_INCOME if kind == "income" else NO_TAG_EXPENSE
+        ]
         base = bases.get((slot, kind), 0.0)
         y0, y1 = base, base + height
         x0, x1 = slot - bar_width / 2, slot + bar_width / 2
@@ -336,6 +382,28 @@ def render_report_png(
     axes.set_ylabel("Сума, ₴-еквівалент")
     axes.set_title(title, fontsize=11)
     axes.grid(axis="y", linestyle=":", alpha=0.3, zorder=0)
+
+    span = (hi + pad) - (lo - pad)
+    for (slot, _kind), value in bases.items():
+        if value == 0:
+            continue
+        y_pos, alignment = _value_label(0.0, value, span)
+        inside = alignment == "center"
+        axes.text(
+            slot,
+            y_pos,
+            f"{_format_amount(abs(value))} ₴",
+            ha="center",
+            va=alignment,
+            fontsize=7,
+            color="#f0f6fc" if inside else "#0d1117",
+            path_effects=[
+                patheffects.withStroke(
+                    linewidth=2, foreground="#0d1117" if inside else "#f0f6fc"
+                )
+            ],
+            zorder=5,
+        )
 
     if goal_value is not None:
         axes.axhline(goal_value, color="#d29922", linewidth=1.4, zorder=4)
