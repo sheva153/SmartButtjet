@@ -439,6 +439,10 @@ class CsvRecordsRepository:
                 if not added_tags:
                     continue
                 merged_tags = list(dict.fromkeys([*record.tags, *added_tags]))
+                # model_copy skips the normalize_tags validator, but merged_tags
+                # is already normalized (existing tags were validated on load;
+                # detected ones via normalize_label above) and deduped, so the
+                # validator would be a no-op here.
                 updated = record.model_copy(update={"tags": merged_tags})
                 row = _to_row(updated)
                 frame.loc[index, RECORD_COLUMNS] = [

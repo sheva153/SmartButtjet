@@ -1,12 +1,14 @@
 """Analytics, dual-chart, and export Telegram handlers."""
 
 import asyncio
+from contextlib import suppress
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from loguru import logger
@@ -113,10 +115,6 @@ async def chart_period_callback(
     callback_data: ChartPeriod,
     analytics_service: AnalyticsService,
 ) -> None:
-    from contextlib import suppress
-
-    from aiogram.exceptions import TelegramBadRequest
-
     await query.answer()
     if callback_data.period not in CHART_PERIODS or not isinstance(
         query.message, Message

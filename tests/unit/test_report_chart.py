@@ -7,9 +7,12 @@ from typing import cast
 import pandas as pd
 import pytest
 
+from income_stats.config import load_config
 from income_stats.models import IncomeRecord, Period, RecordType
 from income_stats.services.report_chart import (
     PERIOD_TITLES,
+    TAG_COLOR,
+    TAG_LABELS,
     _period_buckets,
     _range_buckets,
     render_report_png,
@@ -348,3 +351,17 @@ def test_render_untagged_record_uses_no_tag_sentinel(tmp_path: Path) -> None:
     path = tmp_path / "untagged.png"
     render_report_png(frame, "week", date(2026, 8, 17), path, fx=_FX)
     assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_tag_maps_cover_config_tags() -> None:
+    # The chart colours/labels tags by their `income.tags` key. If the shipped
+    # config gains a tag the maps don't know, it renders grey with a raw
+    # English key (a Ukrainian-label regression); if the maps carry a key the
+    # config never emits as a tag, it is dead. Lock the two together.
+    config_tags = set(load_config().income.tags)
+    assert set(TAG_LABELS) == config_tags
+    assert set(TAG_COLOR) == config_tags
+    # Every label is Ukrainian (not the raw English key) and every colour hex.
+    for tag in config_tags:
+        assert TAG_LABELS[tag] != tag
+        assert TAG_COLOR[tag].startswith("#")

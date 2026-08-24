@@ -13,3 +13,6 @@ logs/
 htmlcov/
 .ruff_cache/
 .pyright/
+
+# Playwright MCP scratch output (browser snapshots/logs)
+.playwright-mcp/

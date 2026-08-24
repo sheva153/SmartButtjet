@@ -44,33 +44,36 @@ PERIOD_TITLES = {
 }
 
 CURRENCY_HATCH = {"UAH": "", "USD": "///", "EUR": "..."}
+# Keys mirror `income.tags` in config.yaml exactly — these are the tags the
+# parser can attach to a record, so every one needs a Ukrainian label and a
+# distinct colour (an unlisted tag falls back to NO_TAG grey + its raw key).
+# tests/unit/test_report_chart.py::test_tag_maps_cover_config_tags locks this
+# in step with the shipped config so the two cannot drift apart again.
 TAG_LABELS = {
-    "salary": "Зарплата",
-    "freelance": "Фриланс",
-    "sales": "Продажі",
-    "consulting": "Консалтинг",
-    "gift": "Подарунок",
     "card": "Картка",
     "cash": "Готівка",
     "rent": "Оренда",
-    "groceries": "Продукти",
-    "cafe": "Кафе",
+    "utilities": "Комуналка",
     "dentistry": "Стоматологія",
+    "health": "Медицина",
+    "groceries": "Продукти",
     "transport": "Транспорт",
+    "cafe": "Кафе",
+    "subscriptions": "Підписки",
+    "education": "Навчання",
 }
 TAG_COLOR = {
-    "salary": "#3fb950",
-    "freelance": "#58a6ff",
-    "sales": "#bc8cff",
-    "consulting": "#d29922",
-    "gift": "#f778ba",
     "card": "#1f6feb",
     "cash": "#2ea043",
     "rent": "#f85149",
-    "groceries": "#db6d28",
-    "cafe": "#a371f7",
+    "utilities": "#d29922",
     "dentistry": "#e3b341",
+    "health": "#f778ba",
+    "groceries": "#db6d28",
     "transport": "#39c5cf",
+    "cafe": "#a371f7",
+    "subscriptions": "#bc8cff",
+    "education": "#58a6ff",
 }
 NO_TAG = ("_none", "Без тегу", "#8b949e")
 _ORDER = {tag: index for index, tag in enumerate([*TAG_LABELS, NO_TAG[0]])}
