@@ -11,7 +11,7 @@ from aiogram.types import Message
 
 from income_stats.config import AppConfig
 from income_stats.models import GoalPeriod
-from income_stats.models.domain import _normalize_currency
+from income_stats.models.domain import normalize_currency
 from income_stats.repositories import RecordsRepository
 from income_stats.services import GoalService
 
@@ -51,7 +51,7 @@ async def goal_handler(
             await message.answer("Ціль має бути більшою за нуль.")
             return
         try:
-            currency = _normalize_currency(currency_raw)
+            currency = normalize_currency(currency_raw)
         except ValueError:
             await message.answer("Валюта — це код з трьох літер, напр. UAH.")
             return

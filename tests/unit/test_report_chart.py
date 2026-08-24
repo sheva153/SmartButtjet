@@ -191,7 +191,7 @@ def test_month_labels_include_weekday() -> None:
 def test_mix_cmap_multi_tag_has_flat_blocks() -> None:
     from income_stats.services.report_chart import _mix_cmap
 
-    cm = _mix_cmap(["card", "groceries", "cafe"])
+    cm = _mix_cmap(("card", "groceries", "cafe"))
     # three distinct block colours sampled away from the seams
     assert cm(0.15) != cm(0.5) != cm(0.85)
 
@@ -199,7 +199,7 @@ def test_mix_cmap_multi_tag_has_flat_blocks() -> None:
 def test_mix_cmap_single_tag_is_flat() -> None:
     from income_stats.services.report_chart import _mix_cmap
 
-    cm = _mix_cmap(["card"])
+    cm = _mix_cmap(("card",))
     assert cm(0.0) == cm(0.5) == cm(1.0)
 
 

@@ -188,10 +188,20 @@ class CsvRecordsRepository:
             raise ValueError(f"Cannot read CSV {path}: {error}") from error
 
     @classmethod
-    def _read(cls, path: Path, columns: list[str]) -> pd.DataFrame:
+    def _read(
+        cls,
+        path: Path,
+        columns: list[str],
+        defaults: dict[str, str] | None = None,
+    ) -> pd.DataFrame:
         if not path.exists():
             return pd.DataFrame(columns=columns)
         frame = cls._read_existing(path)
+        # Backfill legacy files missing a newer column with a constant, in
+        # memory only — persistence stays on the write path.
+        for column, value in (defaults or {}).items():
+            if column not in frame.columns:
+                frame[column] = value
         missing = set(columns) - set(frame.columns)
         if missing:
             raise ValueError(f"CSV {path} misses columns: {sorted(missing)}")
@@ -200,19 +210,11 @@ class CsvRecordsRepository:
     def _read_goals(self) -> pd.DataFrame:
         """Read goals.csv, backfilling a missing `period` column as "month".
 
-        Mirrors `_read`'s side-effect-free contract: legacy files predating
-        period-keyed goals are interpreted in memory only, never rewritten
-        here. Persistence happens exclusively on the write path.
+        Legacy files predating period-keyed goals are interpreted in memory
+        only, never rewritten here (see `_read`); persistence happens on the
+        write path.
         """
-        if not self.goals_path.exists():
-            return pd.DataFrame(columns=GOAL_COLUMNS)
-        frame = self._read_existing(self.goals_path)
-        if "period" not in frame.columns:
-            frame["period"] = "month"
-        missing = set(GOAL_COLUMNS) - set(frame.columns)
-        if missing:
-            raise ValueError(f"CSV {self.goals_path} misses columns: {sorted(missing)}")
-        return cast(pd.DataFrame, frame.loc[:, GOAL_COLUMNS].copy())
+        return self._read(self.goals_path, GOAL_COLUMNS, defaults={"period": "month"})
 
     @staticmethod
     def _atomic_write(frame: pd.DataFrame, path: Path) -> None:

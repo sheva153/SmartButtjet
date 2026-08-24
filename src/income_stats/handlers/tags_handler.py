@@ -6,6 +6,7 @@ from aiogram.types import Message
 
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
+from income_stats.parsers import merge_extra_tags
 from income_stats.repositories import RecordsRepository
 
 tags_router = Router(name="tags")
@@ -19,12 +20,10 @@ async def _merged_tags(
     """Merge configured tags with runtime-defined ones from the tag store.
 
     Runtime aliases extend the configured aliases for a given tag rather than
-    replacing them.
+    replacing them — same taxonomy the parser matches on, so /tags shows
+    exactly what /income would detect.
     """
-    merged = {tag: list(aliases) for tag, aliases in app_config.income.tags.items()}
-    for tag, aliases in (await repository.list_tags()).items():
-        merged[tag] = list(dict.fromkeys([*merged.get(tag, []), *aliases]))
-    return merged
+    return merge_extra_tags(app_config.income.tags, await repository.list_tags())
 
 
 def _render_tags(tags: dict[str, list[str]]) -> str:

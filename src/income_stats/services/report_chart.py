@@ -17,6 +17,7 @@ import calendar
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -191,9 +192,14 @@ def _colours(tags: list[str]) -> list[str]:
     return [TAG_COLOR.get(tag, NO_TAG[2]) for tag in tags]
 
 
-def _mix_cmap(tags: list[str]) -> LinearSegmentedColormap:
-    """Build a gradient with flat colour blocks (short blends at the seams)."""
-    colours = _colours(tags)
+@cache
+def _mix_cmap(tags: tuple[str, ...]) -> LinearSegmentedColormap:
+    """Build a gradient with flat colour blocks (short blends at the seams).
+
+    Cached by tag combo: many records share the same combo (e.g. plain
+    ``card``), so the colormap is built once per distinct mix, not per record.
+    """
+    colours = _colours(list(tags))
     count = len(colours)
     if count == 1:
         return LinearSegmentedColormap.from_list("mix", [colours[0], colours[0]])
@@ -288,7 +294,7 @@ def render_report_png(
             extent=(x0, x1, y_low, y_high),
             aspect="auto",
             origin="lower",
-            cmap=_mix_cmap(record_tags),
+            cmap=_mix_cmap(tuple(record_tags)),
             vmin=0,
             vmax=1,
             zorder=2,
@@ -355,7 +361,6 @@ def render_report_png(
         )
 
     net_total = income_total - expense_total
-    legends = []
 
     together = axes.legend(
         handles=[
@@ -378,7 +383,6 @@ def render_report_png(
         borderaxespad=0.0,
     )
     axes.add_artist(together)
-    legends.append(together)
 
     combos = sorted(combo_total, key=lambda combo: combo_total[combo], reverse=True)
     proxies: list[Patch] = []
@@ -404,7 +408,6 @@ def render_report_png(
         handlelength=2.2,
     )
     axes.add_artist(mixes)
-    legends.append(mixes)
 
     currency_y = 0.86 - (len(combos) + 1.8) * 0.052
     currencies_legend = axes.legend(
@@ -424,7 +427,7 @@ def render_report_png(
         borderaxespad=0.0,
     )
     axes.add_artist(currencies_legend)
-    legends.append(currencies_legend)
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    legends = [together, mixes, currencies_legend]
     figure.savefig(path, bbox_inches="tight", bbox_extra_artists=legends)

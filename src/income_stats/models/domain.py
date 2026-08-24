@@ -45,7 +45,7 @@ def _normalize_labels(values: list[str], *, fallback: str | None) -> list[str]:
     return labels
 
 
-def _normalize_currency(value: object) -> str:
+def normalize_currency(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("Currency must be a three-letter code")
     currency = value.strip().upper()
@@ -68,7 +68,7 @@ class ParsedIncome(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -117,7 +117,7 @@ class IncomeRecord(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
     @field_validator("categories")
     @classmethod
@@ -200,7 +200,7 @@ class ChatGoal(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> str:
-        return _normalize_currency(value)
+        return normalize_currency(value)
 
 
 class GoalConfig(BaseModel):
