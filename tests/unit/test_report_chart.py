@@ -216,12 +216,6 @@ def test_label_falls_back_to_raw_tag() -> None:
     assert _label("unknown-tag") == "unknown-tag"
 
 
-def test_label_maps_no_tag_sentinel() -> None:
-    from income_stats.services.report_chart import NO_TAG, _label
-
-    assert _label(NO_TAG[0]) == "Без тегу"
-
-
 def test_render_tag_mix_writes_png(tmp_path: Path) -> None:
     path = tmp_path / "c.png"
     render_report_png(_mixed_frame(), "week", date(2026, 8, 17), path, fx=_FX)

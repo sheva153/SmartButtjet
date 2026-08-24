@@ -49,7 +49,7 @@ PERIOD_TITLES = {
 CURRENCY_HATCH = {"UAH": "", "USD": "///", "EUR": "..."}
 # Keys mirror `income.tags` in config.yaml exactly — these are the tags the
 # parser can attach to a record, so every one needs a Ukrainian label and a
-# distinct colour (an unlisted tag falls back to NO_TAG grey + its raw key).
+# distinct colour (an unlisted tag falls back to NO_TAG_COLOUR grey + its raw key).
 # tests/unit/test_report_chart.py::test_tag_maps_cover_config_tags locks this
 # in step with the shipped config so the two cannot drift apart again.
 TAG_LABELS = {
@@ -82,19 +82,19 @@ TAG_COLOR = {
     "subscriptions": "#bc8cff",
     "education": "#c939d0",
 }
-NO_TAG = ("_none", "Без тегу", "#8b949e")
+NO_TAG_LABEL = "Без тегу"
+NO_TAG_COLOUR = "#8b949e"  # fallback colour for an unknown (non-config) tag key
 # Untagged records default to blue (income) / red (expense) rather than a
 # single neutral grey, so a bar's colour always tells you income vs expense
 # even with no tag attached.
 NO_TAG_INCOME = "_none_income"
 NO_TAG_EXPENSE = "_none_expense"
 _NO_TAG_VARIANTS: dict[str, tuple[str, str]] = {
-    NO_TAG_INCOME: (NO_TAG[1], "#1f6feb"),
-    NO_TAG_EXPENSE: (NO_TAG[1], "#f85149"),
+    NO_TAG_INCOME: (NO_TAG_LABEL, "#1f6feb"),
+    NO_TAG_EXPENSE: (NO_TAG_LABEL, "#f85149"),
 }
 _ORDER = {
-    tag: index
-    for index, tag in enumerate([*TAG_LABELS, NO_TAG[0], NO_TAG_INCOME, NO_TAG_EXPENSE])
+    tag: index for index, tag in enumerate([*TAG_LABELS, NO_TAG_INCOME, NO_TAG_EXPENSE])
 }
 
 
@@ -205,14 +205,14 @@ def _label(tag: str) -> str:
     """Return the plain Ukrainian display name for a tag (no emoji glyphs)."""
     if tag in _NO_TAG_VARIANTS:
         return _NO_TAG_VARIANTS[tag][0]
-    return TAG_LABELS.get(tag, NO_TAG[1] if tag == NO_TAG[0] else tag)
+    return TAG_LABELS.get(tag, tag)
 
 
 def _colours(tags: list[str]) -> list[str]:
     return [
         _NO_TAG_VARIANTS[tag][1]
         if tag in _NO_TAG_VARIANTS
-        else TAG_COLOR.get(tag, NO_TAG[2])
+        else TAG_COLOR.get(tag, NO_TAG_COLOUR)
         for tag in tags
     ]
 
@@ -487,17 +487,15 @@ def render_report_png(
         entries = _combo_totals_by_kind(combo_total, kind)
         if not entries:
             continue
-        proxies = [
-            Patch(
+        proxies: list[Patch] = []
+        handler_map: dict[Patch, MixHandler] = {}
+        for combo, total in entries:
+            proxy = Patch(
                 label=f"{' + '.join(_label(tag) for tag in combo)}"
                 f" — {_format_amount(total)} ₴"
             )
-            for combo, total in entries
-        ]
-        handler_map = {
-            proxy: MixHandler(_colours(list(combo)))
-            for proxy, (combo, _total) in zip(proxies, entries, strict=True)
-        }
+            proxies.append(proxy)
+            handler_map[proxy] = MixHandler(_colours(list(combo)))
         mix_legend = axes.legend(
             handles=proxies,
             handler_map=handler_map,

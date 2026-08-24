@@ -4,6 +4,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from income_stats.bot.ui import short_id
 from income_stats.config import AppConfig
 from income_stats.handlers.admin_handler import is_telegram_admin
 from income_stats.parsers import detect_tags, merge_extra_tags
@@ -39,7 +40,9 @@ async def retag_handler(
 
     lines = [f"Оновлено {result.changed} з {result.total}"]
     for record, added in result.deltas[:_MAX_DELTA_LINES]:
-        lines.append(f"{record.id[:8]} {record.income_date}: +[{', '.join(added)}]")
+        lines.append(
+            f"{short_id(record.id)} {record.income_date}: +[{', '.join(added)}]"
+        )
     if len(result.deltas) > _MAX_DELTA_LINES:
         lines.append(f"…та ще {len(result.deltas) - _MAX_DELTA_LINES}")
     await message.answer("\n".join(lines))
