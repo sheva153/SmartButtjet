@@ -384,6 +384,44 @@ async def test_month_chart_with_goal_threads_goal_and_forecast_into_png(
     assert captured["kwargs"]["forecast"] is not None
 
 
+async def test_non_uah_goal_line_is_converted_to_uah_equivalent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bars render UAH-equivalent (to_uah); a USD goal/forecast line must be
+    # converted the same way, else it sits at the raw amount — off the bars by
+    # the FX factor.
+    repository = FakeAnalyticsRepository(
+        [
+            make_record("usd1", "20", currency="USD"),
+            make_record("usd2", "30", currency="USD"),
+        ],
+        goal=ChatGoal(
+            chat_id=-100, amount=Decimal("1000"), currency="USD", updated_by=1
+        ),
+    )
+    config = AnalyticsConfig()
+    service = AnalyticsService(
+        as_repository(repository),
+        config,
+        StorageConfig(export_directory=tmp_path),
+    )
+    captured: dict[str, dict[str, object]] = {}
+
+    def capture_render(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+        report_chart_module.render_report_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analytics_module, "render_report_png", capture_render)
+
+    await service.build_chart_artifacts(-100, "month", today=date(2026, 7, 29))
+
+    expected = report_chart_module.to_uah(Decimal("1000"), "USD", config.fx_to_uah)
+    assert captured["kwargs"]["goal"] == expected
+    assert captured["kwargs"]["goal"] != Decimal("1000")  # conversion happened
+    assert captured["kwargs"]["forecast"] is not None
+
+
 async def test_chart_threads_fx_into_png(
     repository: FakeAnalyticsRepository,
     analytics_service: AnalyticsService,

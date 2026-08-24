@@ -69,13 +69,19 @@ async def import_handler(
 
     valid: list[IncomeRecord] = []
     invalid = 0
-    for row in csv.DictReader(io.StringIO(text)):
+    # DictReader consumes the header, so data rows start at file line 2.
+    for line_number, row in enumerate(csv.DictReader(io.StringIO(text)), start=2):
         try:
             valid.append(
                 _record_from_row(row, chat_id=message.chat.id, updated_by=user.id)
             )
-        except Exception:
+        except Exception as error:
+            # One malformed row must not abort the whole import, but the cause
+            # is logged (not swallowed) so the admin can see which line failed.
             invalid += 1
+            logger.bind(chat_id=message.chat.id, line=line_number).warning(
+                "Skipping invalid CSV row: {}", error
+            )
 
     added, skipped = await repository.import_records(valid)
     logger.bind(

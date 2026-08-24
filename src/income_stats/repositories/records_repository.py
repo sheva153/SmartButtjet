@@ -160,7 +160,7 @@ def _decode_string_list(value: object, *, field: str) -> list[str]:
 
 
 class CsvRecordsRepository:
-    """Persist records, notes, and chat settings in atomic CSV files.
+    """Persist records, notes, chat settings, goals, and tags in atomic CSV files.
 
     Async adapters deliberately execute these small local-file critical
     sections directly: the asyncio lock serializes service callers, while the

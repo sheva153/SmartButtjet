@@ -57,7 +57,10 @@ chats:
     set -euo pipefail
     cmd=(uv run python main.py chats)
     echo "→ ${cmd[*]}" >&2
-    "${cmd[@]}"
+    rc=0
+    "${cmd[@]}" || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "  OK" >&2; else echo "  FAIL ($rc)" >&2; fi
+    exit $rc
 
 records chat_id="":
     #!/usr/bin/env bash
@@ -81,7 +84,10 @@ records chat_id="":
         cmd=(uv run python main.py records)
     fi
     echo "→ ${cmd[*]}" >&2
-    "${cmd[@]}"
+    rc=0
+    "${cmd[@]}" || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "  OK" >&2; else echo "  FAIL ($rc)" >&2; fi
+    exit $rc
 
 retag chat_id="":
     #!/usr/bin/env bash
@@ -105,7 +111,10 @@ retag chat_id="":
         cmd=(uv run python main.py retag)
     fi
     echo "→ ${cmd[*]}" >&2
-    "${cmd[@]}"
+    rc=0
+    "${cmd[@]}" || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "  OK" >&2; else echo "  FAIL ($rc)" >&2; fi
+    exit $rc
 
 tmux-setup:
     tmux source-file -n "$HOME/.tmux.conf"

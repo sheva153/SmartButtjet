@@ -1,4 +1,4 @@
-"""/goal command: set or show the monthly income goal."""
+"""/goal command: set or show the monthly and yearly income goals."""
 
 import asyncio
 from datetime import datetime

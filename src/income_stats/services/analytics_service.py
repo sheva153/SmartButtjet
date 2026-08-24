@@ -31,7 +31,11 @@ from income_stats.models import (
     RecordNote,
 )
 from income_stats.repositories import RecordsRepository
-from income_stats.services.report_chart import PERIOD_TITLES, render_report_png
+from income_stats.services.report_chart import (
+    PERIOD_TITLES,
+    render_report_png,
+    to_uah,
+)
 
 _MAX_EXACT_CHART_AMOUNT = Decimal(2**45 - 1)
 
@@ -288,7 +292,14 @@ class AnalyticsService:
         elapsed, total_days = period_span(period, reference)
         daily = daily_income_series(frame, goal.currency, elapsed, reference, period)
         forecast = forecast_total(daily, total_days, self._config.forecast_method)
-        return goal.amount, forecast
+        # The chart plots bars as UAH-equivalent (to_uah), so the goal and
+        # forecast lines must be converted the same way or a non-UAH goal line
+        # sits at the raw amount — off the bars by the FX factor.
+        fx = self._config.fx_to_uah
+        return (
+            to_uah(goal.amount, goal.currency, fx),
+            to_uah(forecast, goal.currency, fx),
+        )
 
     async def build_export(self, chat_id: int) -> Path:
         records, notes = await self._repository.export_snapshot(chat_id)
