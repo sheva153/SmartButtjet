@@ -113,12 +113,16 @@ def _signed_amount(record: IncomeRecord) -> str:
 def records_keyboard(records: Sequence[IncomeRecord], page: int, total_pages: int):
     builder = InlineKeyboardBuilder()
     for record in records:
+        # Telegram caps button text at 64 chars. Reserve room for the tag
+        # suffix and truncate the prefix instead, so the tags never get cut off
+        # — otherwise records with several categories would silently lose them.
+        suffix = f" · 🔖{format_labels(record.tags)}" if record.tags else ""
+        prefix = (
+            f"{record.income_date:%d.%m} · {_signed_amount(record)} "
+            f"{record.currency} · {format_labels(record.categories)}"
+        )
         builder.button(
-            text=(
-                f"{record.income_date:%d.%m} · {_signed_amount(record)} "
-                f"{record.currency} · {format_labels(record.categories)}"
-                + (f" · 🔖{format_labels(record.tags)}" if record.tags else "")
-            )[:64],
+            text=(prefix[: 64 - len(suffix)] + suffix) if suffix else prefix[:64],
             callback_data=RecordAction(action="open", record_id=record.id),
         )
     if page > 0:

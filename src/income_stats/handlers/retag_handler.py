@@ -3,6 +3,7 @@
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
+from loguru import logger
 
 from income_stats.bot.ui import short_id
 from income_stats.config import AppConfig
@@ -37,11 +38,18 @@ async def retag_handler(
     result = await repository.retag_records(
         taxonomy, detect_tags, chat_id=message.chat.id
     )
+    logger.bind(
+        chat_id=message.chat.id,
+        user_id=user.id,
+        changed=result.changed,
+        total=result.total,
+    ).info("Retag processed")
 
     lines = [f"Оновлено {result.changed} з {result.total}"]
     for record, added in result.deltas[:_MAX_DELTA_LINES]:
         lines.append(
-            f"{short_id(record.id)} {record.income_date}: +[{', '.join(added)}]"
+            f"{short_id(record.id)} {record.income_date:%d.%m.%Y}: "
+            f"+[{', '.join(added)}]"
         )
     if len(result.deltas) > _MAX_DELTA_LINES:
         lines.append(f"…та ще {len(result.deltas) - _MAX_DELTA_LINES}")
