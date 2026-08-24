@@ -117,6 +117,7 @@ def records_keyboard(records: Sequence[IncomeRecord], page: int, total_pages: in
             text=(
                 f"{record.income_date:%d.%m} · {_signed_amount(record)} "
                 f"{record.currency} · {format_labels(record.categories)}"
+                + (f" · 🔖{format_labels(record.tags)}" if record.tags else "")
             )[:64],
             callback_data=RecordAction(action="open", record_id=record.id),
         )

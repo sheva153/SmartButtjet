@@ -27,6 +27,7 @@ BOT_COMMANDS = (
     BotCommand(command="chart", description="Створити діаграму"),
     BotCommand(command="goal", description="Задати або показати ціль доходу"),
     BotCommand(command="tags", description="Показати або додати теги"),
+    BotCommand(command="retag", description="Проставити теги наявним записам"),
     BotCommand(command="export", description="Експортувати записи"),
     BotCommand(command="import", description="Імпортувати записи з CSV"),
     BotCommand(command="status", description="Стан запису доходів"),

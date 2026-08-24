@@ -87,6 +87,30 @@ def test_records_keyboard_shows_no_minus_for_income_row() -> None:
     assert "−" not in buttons[0].text
 
 
+def test_records_keyboard_shows_tags_in_button_label() -> None:
+    record = IncomeRecord(
+        telegram_message_id=1,
+        chat_id=-100,
+        user_id=7,
+        original_text="оренда",
+        amount=Decimal("5000"),
+        currency="UAH",
+        income_date=date(2026, 7, 29),
+        updated_by=7,
+        type="expense",
+        tags=["rent"],
+    )
+    keyboard = records_keyboard([record], page=0, total_pages=1)
+
+    assert "rent" in keyboard.inline_keyboard[0][0].text
+
+
+def test_records_keyboard_omits_tag_marker_when_no_tags() -> None:
+    keyboard = records_keyboard([make_record()], page=0, total_pages=1)
+
+    assert "🔖" not in keyboard.inline_keyboard[0][0].text
+
+
 def make_query(*, chat_id: int = -100, user_id: int = 7) -> SimpleNamespace:
     message = Mock(spec=Message)
     message.chat = SimpleNamespace(id=chat_id)
