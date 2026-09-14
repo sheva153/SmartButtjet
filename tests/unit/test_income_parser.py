@@ -177,6 +177,31 @@ def test_configured_english_aliases_stop_street_protection(text: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("configured_tags", "extra_tags", "text", "expected_tag"),
+    [
+        ({"card": ["картка"]}, None, "street Baker CARD 500", "card"),
+        ({}, {"вакалюк": ["вовч"]}, "street Baker ВАКАЛЮК 500", "вакалюк"),
+    ],
+)
+def test_canonical_tag_stops_street_protection(
+    configured_tags: dict[str, list[str]],
+    extra_tags: dict[str, list[str]] | None,
+    text: str,
+    expected_tag: str,
+) -> None:
+    config = IncomeConfig(
+        default_currency="UAH",
+        categories={"other": []},
+        tags=configured_tags,
+    )
+
+    parsed = parse_income_message(text, config, extra_tags=extra_tags)
+
+    assert [item.amount for item in parsed] == [Decimal("500.00")]
+    assert parsed[0].tags == [expected_tag]
+
+
+@pytest.mark.parametrize(
     ("text", "amount", "currency"),
     [
         ("500", Decimal("500.00"), "UAH"),
@@ -360,6 +385,17 @@ def test_taxonomy_aliases_are_word_bounded(income_config: IncomeConfig) -> None:
     assert parsed[0].categories == ["other"]
 
 
+def test_canonical_category_name_remains_alias_only() -> None:
+    config = IncomeConfig(
+        categories={"salary": ["зарплата"], "other": []},
+        tags={},
+    )
+
+    parsed = parse_income_message("salary 500", config)
+
+    assert parsed[0].categories == ["other"]
+
+
 def test_extra_tags_are_merged_into_detected_tags(
     income_config: IncomeConfig,
 ) -> None:
@@ -372,6 +408,34 @@ def test_extra_tags_are_merged_into_detected_tags(
     assert parsed[0].tags == ["gym"]
 
 
+@pytest.mark.parametrize("text", ["вакалюк", "Вакалюк", "ВАКАЛЮК"])
+def test_detect_tags_matches_canonical_tag_name_case_insensitively(
+    text: str,
+) -> None:
+    taxonomy = {"вакалюк": ["вовч"]}
+
+    assert detect_tags(text, taxonomy) == ["вакалюк"]
+
+
+def test_detect_tags_returns_canonical_tag_once_and_keeps_word_boundaries() -> None:
+    taxonomy = {"вакалюк": ["вовч"]}
+
+    assert detect_tags("Вакалюк і вовч", taxonomy) == ["вакалюк"]
+    assert detect_tags("псевдовакалюк", taxonomy) == []
+
+
+def test_runtime_tag_canonical_name_is_used_by_income_parser(
+    income_config: IncomeConfig,
+) -> None:
+    parsed = parse_income_message(
+        "ВАКАЛЮК 500",
+        income_config,
+        extra_tags={"вакалюк": ["вовч"]},
+    )
+
+    assert parsed[0].tags == ["вакалюк"]
+
+
 def test_detect_tags_finds_a_tag_by_its_alias() -> None:
     taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
 
@@ -382,6 +446,23 @@ def test_detect_tags_returns_empty_when_no_alias_matches() -> None:
     taxonomy = {"card": ["картка", "на картку"], "cash": ["готівкою"]}
 
     assert detect_tags("просто текст без ключових слів", taxonomy) == []
+
+
+def test_detect_tags_normalizes_raw_canonical_tag_name() -> None:
+    assert detect_tags("ВАКАЛЮК", {"ВАКАЛЮК": []}) == ["вакалюк"]
+
+
+def test_detect_tags_ignores_blank_aliases() -> None:
+    assert detect_tags("", {"card": ["", "   "]}) == []
+
+
+def test_detect_tags_merges_raw_labels_that_collide_after_normalization() -> None:
+    taxonomy = {
+        "VIP Client": ["priority"],
+        "vip_client": ["gold", "PRIORITY"],
+    }
+
+    assert detect_tags("gold priority", taxonomy) == ["vip_client"]
 
 
 def test_extra_tags_defaults_to_none_and_does_not_change_behavior(

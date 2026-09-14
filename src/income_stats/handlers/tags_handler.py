@@ -20,8 +20,8 @@ async def _merged_tags(
     """Merge configured tags with runtime-defined ones from the tag store.
 
     Runtime aliases extend the configured aliases for a given tag rather than
-    replacing them — same taxonomy the parser matches on, so /tags shows
-    exactly what /income would detect.
+    replacing them. /tags displays only these explicit aliases; canonical tag
+    names are implicit parser match terms and are not added to this mapping.
     """
     return merge_extra_tags(app_config.income.tags, await repository.list_tags())
 

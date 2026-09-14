@@ -577,6 +577,27 @@ def test_retag_records_unions_detected_tags_without_dropping_existing(
     assert listed["already-tagged"].tags == ["cash"]
 
 
+def test_retag_records_detects_canonical_tag_name_case_insensitively(
+    csv_repository: CsvRecordsRepository,
+) -> None:
+    csv_repository.create_record_sync(
+        make_record(
+            id="canonical-tag",
+            telegram_message_id=3,
+            original_text="ВАКАЛЮК 500",
+            tags=["cash"],
+        )
+    )
+
+    result = csv_repository.retag_records_sync({"вакалюк": ["вовч"]}, detect_tags)
+
+    assert result.changed == 1
+    assert result.deltas[0][1] == ["вакалюк"]
+    record = csv_repository.get_record_sync("canonical-tag")
+    assert record is not None
+    assert record.tags == ["cash", "вакалюк"]
+
+
 def test_retag_records_deltas_report_only_the_net_new_tags(
     csv_repository: CsvRecordsRepository,
 ) -> None:
