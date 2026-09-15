@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 
 from income_stats.config.settings import IncomeConfig
-from income_stats.models.domain import ParsedIncome
+from income_stats.models.domain import ParsedIncome, normalize_label
 
 CURRENCY_ALIASES = {
     "₴": "UAH",
@@ -176,28 +176,35 @@ def _overlaps(
 def _has_configured_income_alias(
     text: str,
     config: IncomeConfig | None,
+    tag_taxonomy: dict[str, list[str]] | None = None,
 ) -> bool:
-    if config is None:
+    if config is None and tag_taxonomy is None:
         return False
     lowered = text.casefold()
-    alias_groups = [*config.categories.values(), *config.tags.values()]
-    return any(
-        re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", lowered)
-        for aliases in alias_groups
+    category_aliases = [*config.categories.values()] if config is not None else []
+    if any(
+        re.search(rf"(?<!\w){re.escape(alias.casefold())}(?!\w)", lowered)
+        for aliases in category_aliases
         for alias in aliases
-    )
+    ):
+        return True
+    effective_tags = tag_taxonomy
+    if effective_tags is None and config is not None:
+        effective_tags = config.tags
+    return bool(effective_tags and detect_tags(text, effective_tags))
 
 
 def _address_spans(
     text: str,
     config: IncomeConfig | None,
+    tag_taxonomy: dict[str, list[str]] | None = None,
 ) -> list[tuple[int, int]]:
     spans = [match.span() for match in UNIT_ADDRESS_PATTERN.finditer(text)]
     for match in STREET_ADDRESS_CANDIDATE_PATTERN.finditer(text):
         street_name = match.group("street_name") or ""
         if street_name and (
             STREET_INCOME_CONTEXT_PATTERN.search(street_name)
-            or _has_configured_income_alias(street_name, config)
+            or _has_configured_income_alias(street_name, config, tag_taxonomy)
         ):
             continue
         spans.append(match.span())
@@ -208,6 +215,7 @@ def _protected_context(
     text: str,
     current_date: date,
     config: IncomeConfig | None = None,
+    tag_taxonomy: dict[str, list[str]] | None = None,
 ) -> _ProtectedContext:
     base_patterns = (
         TIME_PATTERN,
@@ -224,7 +232,7 @@ def _protected_context(
                 for pattern in base_patterns
                 for match in pattern.finditer(text)
             ),
-            *_address_spans(text, config),
+            *_address_spans(text, config, tag_taxonomy),
         ]
     )
     base_spans_tuple = tuple(base_spans)
@@ -386,13 +394,35 @@ def _currency_for_match(text: str, match: re.Match[str], default_currency: str) 
     return default_currency
 
 
-def _detect_labels(text: str, aliases: dict[str, list[str]]) -> list[str]:
+def _detect_labels(
+    text: str,
+    aliases: dict[str, list[str]],
+    *,
+    include_labels: bool = False,
+) -> list[str]:
     lowered = text.casefold()
-    return [
-        label
-        for label, terms in aliases.items()
-        if any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", lowered) for term in terms)
-    ]
+    detected: list[str] = []
+    for label, terms in aliases.items():
+        match_terms = [label, *terms] if include_labels else terms
+        if any(
+            re.search(
+                rf"(?<!\w){re.escape(term.casefold())}(?!\w)",
+                lowered,
+            )
+            for term in match_terms
+        ):
+            detected.append(label)
+    return detected
+
+
+def detect_tags(text: str, taxonomy: dict[str, list[str]]) -> list[str]:
+    """Detect tag labels whose canonical name or aliases appear in `text`.
+
+    Public entry point for both new-message parsing and retroactive retagging.
+    Matching is Unicode case-insensitive and word-bounded.
+    """
+    normalized_taxonomy = merge_extra_tags({}, taxonomy)
+    return _detect_labels(text, normalized_taxonomy, include_labels=True)
 
 
 def _income_date(context: _ProtectedContext, current_date: date) -> date:
@@ -418,13 +448,42 @@ def _without_spans(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(characters)
 
 
+def merge_extra_tags(
+    tags: dict[str, list[str]],
+    extra_tags: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    """Extend a canonical tag taxonomy with runtime-defined tag aliases.
+
+    Each tag in `extra_tags` extends the same canonical label's alias list
+    (deduped), rather than overwriting the configured taxonomy.
+    """
+    if not extra_tags:
+        return tags
+    merged = {label: list(aliases) for label, aliases in tags.items()}
+    for tag, aliases in extra_tags.items():
+        canonical = normalize_label(tag)
+        normalized_aliases = [
+            alias.strip().casefold() for alias in aliases if alias.strip()
+        ]
+        merged[canonical] = list(
+            dict.fromkeys([*merged.get(canonical, []), *normalized_aliases])
+        )
+    return merged
+
+
 def parse_income_message(
     text: str,
     config: IncomeConfig,
     *,
     today: date | None = None,
+    extra_tags: dict[str, list[str]] | None = None,
 ) -> list[ParsedIncome]:
-    """Parse every unprotected amount in a message as income or expense."""
+    """Parse every unprotected amount in a message as income or expense.
+
+    `extra_tags` merges runtime-defined tag aliases (e.g. from a persistent
+    tag store) on top of `config.tags` before label detection, without
+    mutating the configured taxonomy.
+    """
     current_date = today or datetime.now(UTC).date()
     # Neutralize a leading minus (offset-preserving: one char -> one space) so the
     # digits after it can still be matched as money; MONEY_PATTERN's lookbehind
@@ -432,7 +491,8 @@ def parse_income_message(
     # does the substitution and counts the minuses in a single pass.
     money_text, minus_count = LEADING_MINUS.subn(" ", text)
     message_is_expense = minus_count > 0 or _has_expense_marker(text, config)
-    context = _protected_context(money_text, current_date, config)
+    tag_taxonomy = merge_extra_tags(config.tags, extra_tags)
+    context = _protected_context(money_text, current_date, config, tag_taxonomy)
     if context.invalid_dates:
         raise IncomeParseError(f"Invalid income date: {context.invalid_dates[0]}")
     candidates: list[tuple[re.Match[str], Decimal]] = []
@@ -446,7 +506,7 @@ def parse_income_message(
         return []
 
     categories = _detect_labels(text, config.categories) or ["other"]
-    tags = _detect_labels(text, config.tags)
+    tags = detect_tags(text, tag_taxonomy)
     removed_spans = [match.span() for match, _ in candidates]
     removed_spans.extend(
         typo[1]

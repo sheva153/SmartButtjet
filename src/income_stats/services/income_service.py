@@ -29,7 +29,10 @@ class IncomeService:
         username: str,
         today: date,
     ) -> list[IncomeRecord]:
-        parsed = parse_income_message(text, self._config, today=today)
+        extra_tags = await self._repository.list_tags()
+        parsed = parse_income_message(
+            text, self._config, today=today, extra_tags=extra_tags
+        )
         created: list[IncomeRecord] = []
         for source_index, item in enumerate(parsed):
             if item.amount is None:

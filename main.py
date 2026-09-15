@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
@@ -13,8 +14,8 @@ from zoneinfo import ZoneInfo
 
 from income_stats.bot.application import run_bot
 from income_stats.config import AppConfig, load_config
-from income_stats.models import Period
-from income_stats.parsers import parse_income_message
+from income_stats.models import IncomeRecord, Period
+from income_stats.parsers import detect_tags, merge_extra_tags, parse_income_message
 from income_stats.repositories import CsvRecordsRepository
 from income_stats.services import AnalyticsService
 
@@ -48,6 +49,19 @@ def _parser() -> argparse.ArgumentParser:
 
     export = commands.add_parser("export", help="Build a scoped CSV export")
     export.add_argument("--chat-id", type=int, required=True)
+
+    records_command = commands.add_parser("records", help="List all records for review")
+    records_command.add_argument("--chat-id", type=int, default=None)
+
+    retag_command = commands.add_parser(
+        "retag", help="Retroactively detect and add tags from original text"
+    )
+    retag_command.add_argument("--chat-id", type=int, default=None)
+
+    commands.add_parser(
+        "chats",
+        help="List distinct chat ids with record counts and top labels",
+    )
     return parser
 
 
@@ -104,6 +118,66 @@ async def _export(config: AppConfig, chat_id: int) -> None:
     print(await _analytics_service(config).build_export(chat_id))
 
 
+def _format_record_line(record: IncomeRecord) -> str:
+    sign = "-" if record.type == "expense" else "+"
+    categories = ",".join(record.categories)
+    tags = ",".join(record.tags)
+    return (
+        f"{record.id[:8]} {record.income_date} {record.type} "
+        f"{sign}{record.amount} {record.currency} "
+        f"categories=[{categories}] tags=[{tags}] {record.description}"
+    )
+
+
+def _records(config: AppConfig, chat_id: int | None) -> None:
+    repository = CsvRecordsRepository(config.storage)
+    for record in repository.list_all_records_sync(chat_id):
+        print(_format_record_line(record))
+
+
+def _merged_tag_taxonomy(
+    config: AppConfig, repository: CsvRecordsRepository
+) -> dict[str, list[str]]:
+    return merge_extra_tags(config.income.tags, repository.list_tags_sync())
+
+
+def _retag(config: AppConfig, chat_id: int | None) -> None:
+    repository = CsvRecordsRepository(config.storage)
+    taxonomy = _merged_tag_taxonomy(config, repository)
+    result = repository.retag_records_sync(taxonomy, detect_tags, chat_id=chat_id)
+    for record, added_tags in result.deltas:
+        description = record.description[:60]
+        print(
+            f'  {record.id[:8]} {record.income_date} "{description}": '
+            f"+[{', '.join(added_tags)}]"
+        )
+    print(f"оновлено {result.changed} з {result.total}")
+
+
+def _chat_summaries(
+    repository: CsvRecordsRepository,
+) -> list[tuple[int, int, list[str]]]:
+    by_chat: dict[int, list[IncomeRecord]] = {}
+    for record in repository.list_all_records_sync():
+        by_chat.setdefault(record.chat_id, []).append(record)
+    summaries: list[tuple[int, int, list[str]]] = []
+    for chat_id, records in sorted(by_chat.items()):
+        label_counts: Counter[str] = Counter()
+        for record in records:
+            label_counts.update(record.categories)
+            label_counts.update(record.tags)
+        top_labels = [label for label, _ in label_counts.most_common(3)]
+        summaries.append((chat_id, len(records), top_labels))
+    return summaries
+
+
+def _chats(config: AppConfig) -> None:
+    repository = CsvRecordsRepository(config.storage)
+    for chat_id, count, top_labels in _chat_summaries(repository):
+        labels = ", ".join(top_labels) if top_labels else "—"
+        print(f"{chat_id} — {count} records, labels: {labels}")
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(arguments)
     config = load_config(args.config)
@@ -122,6 +196,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
     elif args.command == "export":
         asyncio.run(_export(config, args.chat_id))
+    elif args.command == "records":
+        _records(config, args.chat_id)
+    elif args.command == "retag":
+        _retag(config, args.chat_id)
+    elif args.command == "chats":
+        _chats(config)
     return 0
 
 

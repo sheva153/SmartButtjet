@@ -196,6 +196,34 @@ async def test_chart_command_with_garbage_args_shows_picker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chart_period_callback_deletes_picker_message(tmp_path: Path) -> None:
+    png = tmp_path / "chart.png"
+    png.write_bytes(b"\x89PNG")
+    query_message = Mock(spec=Message)
+    query_message.chat = SimpleNamespace(id=-100)
+    query_message.answer_photo = AsyncMock()
+    query_message.answer_document = AsyncMock()
+    query_message.answer = AsyncMock()
+    query_message.delete = AsyncMock()
+    query = SimpleNamespace(message=query_message, answer=AsyncMock())
+    service = SimpleNamespace(
+        build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(png, None))
+    )
+
+    await chart_period_callback(
+        cast(CallbackQuery, query),
+        ChartPeriod(period="week"),
+        cast(AnalyticsService, service),
+    )
+
+    query_message.delete.assert_awaited_once()
+    service.build_chart_artifacts.assert_awaited_once_with(
+        -100, "week", date_range=None
+    )
+    query_message.answer_photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_chart_period_callback_builds_and_sends(tmp_path: Path) -> None:
     png = tmp_path / "chart.png"
     png.write_bytes(b"\x89PNG")
@@ -204,6 +232,7 @@ async def test_chart_period_callback_builds_and_sends(tmp_path: Path) -> None:
     query_message.answer_photo = AsyncMock()
     query_message.answer_document = AsyncMock()
     query_message.answer = AsyncMock()
+    query_message.delete = AsyncMock()
     query = SimpleNamespace(message=query_message, answer=AsyncMock())
     service = SimpleNamespace(
         build_chart_artifacts=AsyncMock(return_value=ChartArtifacts(png, None))
@@ -226,6 +255,7 @@ async def test_chart_period_callback_reports_build_failure() -> None:
     query_message = Mock(spec=Message)
     query_message.chat = SimpleNamespace(id=-100)
     query_message.answer = AsyncMock()
+    query_message.delete = AsyncMock()
     query = SimpleNamespace(message=query_message, answer=AsyncMock())
     service = SimpleNamespace(
         build_chart_artifacts=AsyncMock(side_effect=RuntimeError("render boom"))
@@ -237,12 +267,14 @@ async def test_chart_period_callback_reports_build_failure() -> None:
         cast(AnalyticsService, service),
     )
 
+    query_message.delete.assert_awaited_once()
     query_message.answer.assert_awaited_once_with("Не вдалося побудувати діаграму.")
 
 
 @pytest.mark.asyncio
 async def test_chart_period_callback_rejects_unknown_period() -> None:
     query_message = Mock(spec=Message)
+    query_message.delete = AsyncMock()
     query = SimpleNamespace(message=query_message, answer=AsyncMock())
     service = SimpleNamespace(build_chart_artifacts=AsyncMock())
 
@@ -253,6 +285,7 @@ async def test_chart_period_callback_rejects_unknown_period() -> None:
     )
 
     service.build_chart_artifacts.assert_not_awaited()
+    query_message.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio

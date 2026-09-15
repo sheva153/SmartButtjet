@@ -5,6 +5,7 @@ from income_stats.services.analytics_service import (
     AnalyticsService,
     ChartArtifacts,
     build_fun_summary,
+    forecast_total,
 )
 from income_stats.services.goal_service import GoalProgress, GoalService
 from income_stats.services.income_service import IncomeService
@@ -27,4 +28,5 @@ __all__ = [
     "RecordPage",
     "RecordsService",
     "build_fun_summary",
+    "forecast_total",
 ]

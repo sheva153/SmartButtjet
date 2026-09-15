@@ -220,6 +220,73 @@ async def test_chart_generates_png_report(tmp_path: Path) -> None:
             artifacts.png.unlink(missing_ok=True)
 
 
+def test_records_and_retag_return_zero_on_empty_store(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+
+    records = _run_cli(config, "records")
+    retag = _run_cli(config, "retag")
+
+    assert records.returncode == 0, records.stderr
+    assert records.stdout == ""
+    assert retag.returncode == 0, retag.stderr
+    assert retag.stdout.strip() == "оновлено 0 з 0"
+
+
+def test_records_and_retag_are_scoped_to_chat_id(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    _seed_scoped_records(config)
+
+    records = _run_cli(config, "records", "--chat-id", "-100")
+    retag = _run_cli(config, "retag", "--chat-id", "-100")
+
+    assert records.returncode == 0, records.stderr
+    assert "included" in records.stdout
+    assert "excluded" not in records.stdout
+    assert retag.returncode == 0, retag.stderr
+    assert retag.stdout.strip() == "оновлено 0 з 1"
+
+
+def test_retag_reports_added_tags_per_record(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n  tags:\n    card: [картку]\n",
+        encoding="utf-8",
+    )
+    repository = CsvRecordsRepository(load_config(config).storage)
+    repository.create_record_sync(
+        IncomeRecord(
+            id="untagged-record",
+            telegram_message_id=1,
+            chat_id=-100,
+            user_id=7,
+            original_text="оплата на картку",
+            amount=Decimal("500"),
+            currency="UAH",
+            income_date=date(2026, 8, 1),
+            updated_by=7,
+        )
+    )
+
+    result = _run_cli(config, "retag")
+
+    assert result.returncode == 0, result.stderr
+    assert "untagged" in result.stdout
+    assert "+[card]" in result.stdout
+    assert "оновлено 1 з 1" in result.stdout
+
+
+def test_chats_lists_distinct_chat_ids_with_summary(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    _seed_scoped_records(config)
+
+    result = _run_cli(config, "chats")
+
+    assert result.returncode == 0, result.stderr
+    assert "-100" in result.stdout
+    assert "-200" in result.stdout
+    assert "labels: other" in result.stdout
+
+
 def test_justfile_invokes_uv_directly() -> None:
     contents = Path("justfile").read_text(encoding="utf-8")
 

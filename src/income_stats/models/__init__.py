@@ -7,11 +7,13 @@ from income_stats.models.domain import (
     FunItem,
     FunSummaryConfig,
     GoalConfig,
+    GoalPeriod,
     IncomeRecord,
     ParsedIncome,
     Period,
     RecordNote,
     RecordType,
+    TagAlias,
     normalize_label,
 )
 
@@ -22,10 +24,12 @@ __all__ = [
     "FunItem",
     "FunSummaryConfig",
     "GoalConfig",
+    "GoalPeriod",
     "IncomeRecord",
     "ParsedIncome",
     "Period",
     "RecordNote",
     "RecordType",
+    "TagAlias",
     "normalize_label",
 ]

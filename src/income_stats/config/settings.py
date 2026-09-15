@@ -1,6 +1,7 @@
 """Typed application configuration loaded from YAML and environment variables."""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
@@ -25,6 +26,7 @@ class StorageConfig(BaseModel):
     notes_file: Path = Path("data/record_notes.csv")
     chat_settings_file: Path = Path("data/chat_settings.csv")
     goals_file: Path = Path("data/goals.csv")
+    tags_file: Path = Path("data/tags.csv")
     export_directory: Path = Path("data/exports")
 
 
@@ -105,6 +107,10 @@ class AnalyticsConfig(BaseModel):
     default_period: Period = "month"
     static_preview: bool = True
     interactive_html: bool = True
+    forecast_method: Literal["linear", "average", "weighted"] = "weighted"
+    fx_to_uah: dict[str, float] = Field(
+        default_factory=lambda: {"USD": 41.0, "EUR": 45.0}
+    )
 
 
 class AppConfig(BaseModel):

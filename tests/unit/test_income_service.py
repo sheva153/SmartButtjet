@@ -14,6 +14,12 @@ class FakeIncomeRepository:
     def __init__(self) -> None:
         self.records: list[IncomeRecord] = []
         self.create_order: list[int] = []
+        self.tags: dict[str, list[str]] = {}
+        self.list_tags_calls = 0
+
+    async def list_tags(self) -> dict[str, list[str]]:
+        self.list_tags_calls += 1
+        return self.tags
 
     async def create_record(self, record: IncomeRecord) -> IncomeRecord:
         self.create_order.append(record.source_index)
@@ -146,3 +152,23 @@ async def test_capture_preserves_expense_type(income_service: IncomeService) -> 
         today=date(2026, 8, 17),
     )
     assert records[0].type == "expense"
+
+
+async def test_capture_applies_runtime_tags_from_repository(
+    income_config: IncomeConfig,
+) -> None:
+    repository = FakeIncomeRepository()
+    repository.tags = {"gym": ["зал"]}
+    service = IncomeService(cast(RecordsRepository, repository), income_config)
+
+    records = await service.capture(
+        text="500 зал",
+        telegram_message_id=10,
+        chat_id=-100,
+        user_id=7,
+        username="felix",
+        today=date(2026, 7, 29),
+    )
+
+    assert repository.list_tags_calls == 1
+    assert records[0].tags == ["gym"]
